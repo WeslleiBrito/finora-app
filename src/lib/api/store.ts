@@ -159,6 +159,11 @@ export const api = {
     });
   },
 
+  async deleteInvoice(id: UUID) {
+    return fetchApi<void>(`/invoice/${id}`, {
+      method: "DELETE"
+    })
+  },
   // ==========================================
   // TRANSAÇÕES (PAGAMENTOS/RECEBIMENTOS)
   // ==========================================
@@ -283,6 +288,23 @@ export const api = {
     return fetchApi<PersonResponseDTO>(endpoint, {
       method: "PUT",
       body: JSON.stringify(input),
+    });
+  },
+
+  async deleteInstallment(id: string) {
+    return fetchApi<void>(`/invoice/installment/${id}`, {
+      method: "DELETE"
+    });
+  },
+
+  // 3. Editar uma Parcela
+  // Nota: A tipagem de retorno aqui pode ser o DTO da parcela, pois o Spring Boot devolve a parcela atualizada
+  async updateInstallment(id: string, body: { amount: number; dueDate: string; accountId: string; paymentInstrumentId?: string }) {
+    return fetchApi<any>(`/invoice/installment/${id}`, {
+      method: "PUT",
+      // Dependendo de como o seu fetchApi é construído por baixo dos panos, 
+      // você passa o objeto direto ou precisa do JSON.stringify:
+      body: JSON.stringify(body) 
     });
   },
 };

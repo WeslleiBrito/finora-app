@@ -1,17 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageHeader } from "@/components/app/page-header";
+import { FinancialDashboard } from "@/components/templates/financial-dashboard";
 
 export const Route = createFileRoute("/_privado/receber")({
+  head: () => ({ meta: [{ title: "Contas a Receber" }] }),
   component: ContasAReceberPage,
 });
 
 function ContasAReceberPage() {
-  return (
-    <div className="space-y-6">
-      <PageHeader title="A Receber" description="Gerencie seus recebimentos e clientes." />
-      <div className="p-8 text-center text-muted-foreground border-2 border-dashed rounded-xl">
-        Em breve: Lista de contas a receber!
-      </div>
-    </div>
-  );
+  // Chama o template genérico configurado para ENTRADAS
+  return <FinancialDashboard direction="RECEIPT" />;
 }

@@ -81,6 +81,7 @@ export interface AccountResponseDTO {
   overdraftLimit?: number;
   yieldRate?: number;
   status: StatusEntity;
+  transactions: TransactionResponseDTO[];
 }
 
 export interface CreditCardDetailsDTO {

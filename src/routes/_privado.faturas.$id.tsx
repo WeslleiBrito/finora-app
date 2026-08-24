@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { CheckCircle2, CircleDashed, Undo2, Receipt, ArrowRightLeft } from "lucide-react";
+import { CheckCircle2, CircleDashed, Undo2, Receipt, ArrowRightLeft, Trash2, Edit3 } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/app/page-header";
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api/store";
 import { accountsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
 import { formatMoney, todayIso } from "@/lib/format";
+import { EditInstallmentDialog } from "@/components/modals/edit-installment-dialog";
 
 export const Route = createFileRoute("/_privado/faturas/$id")({
   component: FaturaDetailsPage,
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/_privado/faturas/$id")({
 
 function FaturaDetailsPage() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // 1. Buscas (Queries)
@@ -33,40 +35,60 @@ function FaturaDetailsPage() {
   const { data: accounts } = useQuery(accountsQuery);
   const { data: instruments } = useQuery(paymentInstrumentsQuery);
 
-  // 2. Estados do Modal de Pagamento
+  // 2. Estados dos Modais
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<any>(null);
+
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [selectedInstallmentToEdit, setSelectedInstallmentToEdit] = useState<any>(null);
 
   const [paymentDate, setPaymentDate] = useState(todayIso());
   const [accountId, setAccountId] = useState("");
   const [instrumentId, setInstrumentId] = useState("none");
 
-  const [amount, setAmount] = useState(0); // Amortização (Nominal)
+  const [amount, setAmount] = useState(0); 
   const [interest, setInterest] = useState(0);
   const [fine, setFine] = useState(0);
   const [discount, setDiscount] = useState(0);
 
-  // 3. Cálculos Dinâmicos do Modal
+  // 3. Cálculos Dinâmicos do Modal de Pagamento
   const effectiveAmount = (amount || 0) + (interest || 0) + (fine || 0) - (discount || 0);
 
-  // 4. Abrir Modal Preparado
+  // 4. Mutações de Exclusão (Novas Funcionalidades)
+  const deleteInvoiceMutation = useMutation({
+    mutationFn: () => api.deleteInvoice(id),
+    onSuccess: () => {
+      toast.success("Fatura e parcelas excluídas com sucesso!");
+      navigate({ to: "/faturas" }); 
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const deleteInstallmentMutation = useMutation({
+    mutationFn: (installmentId: string) => api.deleteInstallment(installmentId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoice", id] });
+      toast.success("Parcela excluída com sucesso!");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // 5. Abrir Modal de Pagamento
   const openPaymentModal = (installment: any) => {
     setSelectedInstallment(installment);
-    // Sugere pagar o saldo restante total da parcela
     const remaining = installment.amount - installment.totalPaid;
     setAmount(remaining);
     setInterest(0);
     setFine(0);
     setDiscount(0);
-    setAccountId(invoice?.accountId || ""); // Puxa a conta padrão da fatura
+    setAccountId(invoice?.accountId || ""); 
     setPaymentDate(todayIso());
     setPayModalOpen(true);
   };
 
-  // 5. Mutação: Pagar Parcela
+  // 6. Mutação: Pagar Parcela
   const payMutation = useMutation({
     mutationFn: () => {
-      // Monta o payload base obrigatório
       const transactionPayload = {
         installmentId: selectedInstallment.id,
         accountId,
@@ -75,7 +97,6 @@ function FaturaDetailsPage() {
         interest,
         fine,
         discount,
-        // 🌟 AQUI ESTÁ A CORREÇÃO MÁGICA DO TYPESCRIPT
         ...(instrumentId !== "none" && { paymentInstrumentId: instrumentId })
       };
 
@@ -91,9 +112,9 @@ function FaturaDetailsPage() {
     onError: (err: any) => toast.error(err.message),
   });
 
-  // 6. Mutação: Estornar Transação
+  // 7. Mutação: Estornar Transação
   const reverseMutation = useMutation({
-    mutationFn: (transactionId: string) => api.reverseTransaction(transactionId),
+    mutationFn: (transactionId: string) => api.reverseTransaction(transactionId, { reason: "" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["invoice", id] });
       toast.success("Estorno realizado com sucesso!");
@@ -104,9 +125,34 @@ function FaturaDetailsPage() {
   if (isLoading) return <div className="p-8 text-center">Carregando detalhes...</div>;
   if (!invoice) return <div className="p-8 text-center text-destructive">Fatura não encontrada.</div>;
 
+  // 🌟 REGRA DE NEGÓCIO DA FATURA: Só deleta se nada foi pago!
+  const invoiceAmortized = (invoice.totalPaid || 0) + (invoice.totalDiscount || 0);
+  const canDeleteInvoice = invoiceAmortized === 0;
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Detalhes da Fatura" description={`Emitida em ${format(new Date(invoice.issueDate), "dd/MM/yyyy")}`} />
+      
+      {/* 🌟 HEADER COM BOTÃO DE EXCLUIR FATURA */}
+      <PageHeader 
+        title="Detalhes da Fatura" 
+        description={`Emitida em ${format(new Date(invoice.issueDate), "dd/MM/yyyy")}`}
+        action={
+          canDeleteInvoice ? (
+            <Button 
+              variant="destructive" 
+              className="rounded-full shadow-sm"
+              disabled={deleteInvoiceMutation.isPending}
+              onClick={() => {
+                if (window.confirm("Deseja realmente excluir esta fatura inteira? Todas as parcelas em aberto serão apagadas. Esta ação é irreversível.")) {
+                  deleteInvoiceMutation.mutate();
+                }
+              }}
+            >
+              <Trash2 className="size-4 mr-2" /> Excluir Lançamento
+            </Button>
+          ) : undefined
+        }
+      />
 
       {/* ======================================================== */}
       {/* 📊 RESUMO DA FATURA                                        */}
@@ -138,8 +184,12 @@ function FaturaDetailsPage() {
 
         <div className="divide-y">
           {invoice.installments.map((parcel: any) => {
-            const isPaid = parcel.isPaid === "FINALIZED";
+            const isPaid = parcel.status === "FINALIZED";
             const remaining = parcel.amount - parcel.totalPaid;
+            
+            // 🌟 REGRA DE NEGÓCIO DA PARCELA
+            const parcelAmortized = (parcel.totalPaid || 0) + (parcel.totalDiscount || parcel.TotalDiscount || 0);
+            const canDeleteInstallment = parcelAmortized === 0;
 
             return (
               <div key={parcel.id} className="p-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between hover:bg-muted/10 transition-colors">
@@ -153,7 +203,7 @@ function FaturaDetailsPage() {
                     <h4 className="font-bold flex items-center gap-2">
                       {parcel.parcelNumber}ª Parcela
                       <Badge variant={isPaid ? "default" : "secondary"}>
-                        {isPaid ? "Quitada" : parcel.isPaid === "PARTIALLY_PAID" ? "Parcial" : "Aberta"}
+                        {isPaid ? "Quitada" : parcel.status === "PARTIALLY_PAID" ? "Parcial" : "Aberta"}
                       </Badge>
                     </h4>
                     <p className="text-sm text-muted-foreground">Vence em {format(new Date(parcel.dueDate), "dd/MM/yyyy")}</p>
@@ -169,42 +219,75 @@ function FaturaDetailsPage() {
                     {parcel.transactions?.length > 0 && (
                       <div className="mt-4 space-y-2 border-l-2 pl-3">
                         <p className="text-xs font-semibold text-muted-foreground uppercase">Histórico de Pagamentos</p>
-                        {parcel.transactions.map((tx: any) => (
-                          <div key={tx.id} className={`flex items-center gap-3 text-xs p-2 rounded ${tx.movementType === 'REVERSAL' ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
-                            <ArrowRightLeft className="size-3" />
-                            <span className="flex-1">
-                              {tx.movementType === 'REVERSAL' ? 'Estorno' : 'Pagamento'} em {format(new Date(tx.paymentDate), "dd/MM")}
-                              {tx.discount > 0 && <span className="text-inflow ml-2">(-{formatMoney(tx.discount)})</span>}
-                              {(tx.interest > 0 || tx.fine > 0) && <span className="text-destructive ml-2">(+J/M)</span>}
-                            </span>
-                            <span className="font-bold">{formatMoney(tx.effectiveAmount)}</span>
+                        {parcel.transactions.map((tx: any) => {
+                          const isAlreadyReversed = parcel.transactions.some((rev: any) => rev.reversedTransactionId === tx.id);
+                          const canReverse = tx.movementType !== 'REVERSAL' && !isAlreadyReversed;
 
-                            {/* Botão de Estorno (Só aparece se não for um estorno e não tiver sido estornada) */}
-                            {tx.movementType !== 'REVERSAL' && !tx.reversed && (
-                              <Button
-                                variant="ghost" size="icon" className="size-6 h-6 w-6 text-destructive hover:bg-destructive/20"
-                                onClick={() => {
-                                  if (window.confirm("Deseja realmente estornar este pagamento? Os saldos retornarão ao estado anterior.")) {
-                                    reverseMutation.mutate(tx.id);
-                                  }
-                                }}
-                              >
-                                <Undo2 className="size-3" />
-                              </Button>
-                            )}
-                          </div>
-                        ))}
+                          return (
+                            <div key={tx.id} className={`flex items-center gap-3 text-xs p-2 rounded ${tx.movementType === 'REVERSAL' ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
+                              <ArrowRightLeft className="size-3" />
+                              <span className="flex-1">
+                                {tx.movementType === 'REVERSAL' ? 'Estorno' : 'Pagamento'} em {format(new Date(tx.paymentDate), "dd/MM")}
+                                {tx.discount > 0 && <span className="text-inflow ml-2">(-{formatMoney(tx.discount)})</span>}
+                                {(tx.interest > 0 || tx.fine > 0) && <span className="text-destructive ml-2">(+J/M)</span>}
+                              </span>
+                              <span className="font-bold">{formatMoney(tx.effectiveAmount)}</span>
+
+                              {canReverse && (
+                                <Button
+                                  variant="ghost" size="icon" className="size-6 h-6 w-6 text-destructive hover:bg-destructive/20"
+                                  onClick={() => {
+                                    if (window.confirm("Deseja realmente estornar este pagamento? Os saldos retornarão ao estado anterior.")) {
+                                      reverseMutation.mutate(tx.id);
+                                    }
+                                  }}
+                                >
+                                  <Undo2 className="size-3" />
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* Ação */}
-                {!isPaid && (
-                  <Button onClick={() => openPaymentModal(parcel)} className="shrink-0 rounded-full">
-                    Pagar Parcela
+                {/* 🌟 AÇÕES DA PARCELA (PAGAR / EDITAR / EXCLUIR) */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button 
+                    variant="outline" 
+                    size="icon" 
+                    className="rounded-full" 
+                    title="Editar Vencimento ou Valor"
+                    onClick={() => { setSelectedInstallmentToEdit(parcel); setEditModalOpen(true); }}
+                  >
+                    <Edit3 className="size-4 text-muted-foreground" />
                   </Button>
-                )}
+
+                  {canDeleteInstallment && (
+                    <Button 
+                      variant="outline" 
+                      size="icon" 
+                      className="rounded-full hover:bg-destructive/10 hover:text-destructive" 
+                      title="Excluir Parcela"
+                      disabled={deleteInstallmentMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm("Deseja realmente excluir esta parcela? Se for a última parcela, a fatura inteira será excluída.")) {
+                          deleteInstallmentMutation.mutate(parcel.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
+
+                  {!isPaid && (
+                    <Button onClick={() => openPaymentModal(parcel)} className="rounded-full">
+                      Pagar
+                    </Button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -212,7 +295,7 @@ function FaturaDetailsPage() {
       </div>
 
       {/* ======================================================== */}
-      {/* MODAL DE PAGAMENTO COM CÁLCULO DE VALOR EFETIVO            */}
+      {/* MODAL DE PAGAMENTO                                         */}
       {/* ======================================================== */}
       <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -277,6 +360,13 @@ function FaturaDetailsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 🌟 MODAL DE EDIÇÃO DE PARCELA */}
+      <EditInstallmentDialog 
+        open={editModalOpen} 
+        onOpenChange={setEditModalOpen} 
+        installment={selectedInstallmentToEdit} 
+      />
     </div>
   );
 }

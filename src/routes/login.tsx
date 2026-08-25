@@ -4,7 +4,6 @@ import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase"; 
@@ -102,9 +101,6 @@ export function AuthLayout({
           <p className="mb-6 mt-1 text-sm text-muted-foreground">{subtitle}</p>
           {children}
         </div>
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Protótipo: o login definitivo usará Firebase + POST /api/users/sync.
-        </p>
       </div>
     </div>
   );

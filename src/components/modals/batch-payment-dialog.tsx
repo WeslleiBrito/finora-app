@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Landmark, Plus, AlertTriangle, Calculator } from "lucide-react";
+import { CheckCircle2, Landmark, Plus, AlertTriangle, Calculator, Wand2, FileText } from "lucide-react"; // 🌟 ADD FileText
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -14,6 +14,10 @@ import { accountsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
 import { formatMoney, todayIso } from "@/lib/format";
 import { AccountDialog } from "./account-dialog";
+import { PaymentTypeMeta } from "@/lib/constants";
+
+// 🌟 IMPORTANDO O NOVO MODAL
+import { InvoiceHistoryDialog } from "./invoice-history-dialog"; 
 
 interface BatchPaymentDialogProps {
   open: boolean;
@@ -39,9 +43,15 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
 
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [items, setItems] = useState<Record<string, ItemData>>({});
+  const [globalInstrumentId, setGlobalInstrumentId] = useState("");
+  
+  // 🌟 ESTADOS PARA O MODAL DE HISTÓRICO DA FATURA
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
 
   useEffect(() => {
     if (open && installments.length > 0) {
+      setGlobalInstrumentId(""); 
       const initial: Record<string, ItemData> = {};
       installments.forEach(inst => {
         initial[inst.id] = {
@@ -58,16 +68,25 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
     }
   }, [open, installments]);
 
+  const handleGlobalInstrumentChange = (val: string) => {
+    setGlobalInstrumentId(val);
+    setItems(prev => {
+      const nextItems: Record<string, ItemData> = {};
+      Object.keys(prev).forEach(key => {
+        const currentItem = prev[key];
+        if (currentItem) {
+          nextItems[key] = { ...currentItem, instrumentId: val };
+        }
+      });
+      return nextItems;
+    });
+  };
+
   const updateItem = (id: string, field: keyof ItemData, value: any) => {
     setItems(prev => {
       const currentItem = prev[id] || { amount: 0, interest: 0, fine: 0, discount: 0, accountId: "", instrumentId: "", paymentDate: todayIso() };
-      
       const updated = { ...currentItem, [field]: value };
-      
-      if (field === "accountId") {
-         updated.instrumentId = ""; 
-      }
-      
+      if (field === "accountId") updated.instrumentId = ""; 
       return { ...prev, [id]: updated };
     });
   };
@@ -75,12 +94,10 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
   let totalEffective = 0;
   let totalPrincipal = 0;
   let missingAccounts = false;
-  
   const accountEffectiveSums: Record<string, number> = {};
 
   const transactionsPayload = installments.map(inst => {
     const data = items[inst.id] || { amount: 0, interest: 0, fine: 0, discount: 0, accountId: "", instrumentId: "", paymentDate: todayIso() };
-    
     if (!data.accountId) missingAccounts = true;
 
     const numAmount = Number(data.amount) || 0;
@@ -89,13 +106,10 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
     const numDiscount = Number(data.discount) || 0;
     
     const effective = numAmount + numInterest + numFine - numDiscount;
-    
     totalPrincipal += numAmount;
     totalEffective += Math.max(0, effective);
 
-    if (data.accountId) {
-      accountEffectiveSums[data.accountId] = (accountEffectiveSums[data.accountId] || 0) + effective;
-    }
+    if (data.accountId) accountEffectiveSums[data.accountId] = (accountEffectiveSums[data.accountId] || 0) + effective;
 
     return {
       installmentId: inst.id,
@@ -113,9 +127,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
   let hasWalletError = false;
   Object.entries(accountEffectiveSums).forEach(([accId, total]) => {
     const acc = (accounts.data ?? []).find((a: any) => a.id === accId);
-    if (acc?.type === "WALLET" && total > acc.balance) { 
-      hasWalletError = true;
-    }
+    if (acc?.type === "WALLET" && total > acc.balance) hasWalletError = true;
   });
 
   const payBatch = useMutation({
@@ -131,6 +143,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
   });
 
   const canSave = !missingAccounts && totalPrincipal > 0 && !hasWalletError;
+  const globalValidInstruments = (instruments.data ?? []).filter((i: any) => i.instrumentNature === "PAYMENT");
 
   return (
     <>
@@ -145,6 +158,27 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
               </Button>
             </DialogTitle>
           </DialogHeader>
+
+          <div className="bg-muted/10 border-b px-6 py-3 flex items-center justify-between shadow-sm z-10">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+              <Wand2 className="size-3 text-primary" /> Preenchimento Rápido
+            </span>
+            <div className="flex items-center gap-3">
+              <Label className="text-xs text-muted-foreground whitespace-nowrap">Aplicar Forma a Todas:</Label>
+              <Select value={globalInstrumentId} onValueChange={handleGlobalInstrumentChange}>
+                <SelectTrigger className="h-8 text-xs w-[220px] bg-background border-primary/20">
+                  <SelectValue placeholder="Selecione para replicar..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {globalValidInstruments.map((i: any) => (
+                    <SelectItem key={i.id} value={i.id}>
+                      {i.cardHolderName || PaymentTypeMeta[i.paymentType] || i.paymentType}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {hasWalletError && (
@@ -157,11 +191,9 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
               {installments.map((inst) => {
                 const data = items[inst.id] || { amount: 0, interest: 0, fine: 0, discount: 0, accountId: "", instrumentId: "", paymentDate: todayIso() };
                 const newBalance = Math.max(0, inst.remainingBalance - (Number(data.amount) || 0));
-
                 const rowAcc = (accounts.data ?? []).find((a: any) => a.id === data.accountId);
                 const isWallet = rowAcc?.type === "WALLET";
                 
-                // 🌟 FILTRAGEM INTELIGENTE: Apenas natureza PAYMENT + Regra da Carteira
                 const validInstruments = (instruments.data ?? []).filter((i: any) => {
                   if (i.instrumentNature !== "PAYMENT") return false;
                   if (isWallet) return i.paymentType === "CASH";
@@ -169,11 +201,26 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                 });
 
                 return (
-                  <div key={inst.id} className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
+                  <div key={inst.id} className="p-4 border rounded-xl bg-card shadow-sm space-y-4 hover:border-primary/30 transition-colors">
                     <div className="flex justify-between items-start border-b pb-3">
                       <div>
-                        <p className="font-bold text-sm text-primary">{inst.personName}</p>
-                        <p className="text-xs text-muted-foreground">
+                        {/* 🌟 BOTÃO DE HISTÓRICO ADICIONADO AO LADO DO NOME */}
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-sm text-primary">{inst.personName}</p>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                            title="Ver histórico da fatura"
+                            onClick={() => {
+                              setSelectedInvoice(inst.invoiceData);
+                              setHistoryModalOpen(true);
+                            }}
+                          >
+                            <FileText className="size-3" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
                           Venc: {format(new Date(inst.dueDate), "dd/MM/yyyy")} | Saldo da Fatura: <span className="font-semibold text-foreground">{formatMoney(inst.remainingBalance)}</span>
                         </p>
                       </div>
@@ -200,7 +247,11 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                         <Select value={data.instrumentId} onValueChange={(val) => updateItem(inst.id, "instrumentId", val)} disabled={!data.accountId}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Automático/Opcional" /></SelectTrigger>
                           <SelectContent>
-                            {validInstruments.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.cardHolderName || i.paymentType}</SelectItem>)}
+                            {validInstruments.map((i: any) => (
+                              <SelectItem key={i.id} value={i.id}>
+                                {i.cardHolderName || PaymentTypeMeta[i.paymentType] || i.paymentType}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -257,6 +308,13 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
       </Dialog>
 
       <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={() => {}} />
+      
+      {/* 🌟 RENDERIZA O MODAL DE HISTÓRICO DA FATURA (SOBREPONDO O LOTE SE ABERTO) */}
+      <InvoiceHistoryDialog 
+        open={historyModalOpen} 
+        onOpenChange={setHistoryModalOpen} 
+        invoice={selectedInvoice} 
+      />
     </>
   );
 }

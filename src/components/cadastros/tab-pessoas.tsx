@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import { Plus, Trash2, Pencil, Briefcase } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,8 @@ import { InteractiveList, type ListItemProps } from "@/components/app/interactiv
 
 import { peopleQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
-import type { PhoneDTO, AddressDTO, PhoneType } from "@/lib/api/types";
-import { formatDocument } from "@/lib/format"; // Vamos usar a sua formatação já existente
+import type { PhoneDTO, AddressDTO, PhoneType, PersonRole } from "@/lib/api/types";
+import { formatDocument } from "@/lib/format";
 
 export function TabPessoas() {
   const queryClient = useQueryClient();
@@ -23,6 +23,9 @@ export function TabPessoas() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [kind, setKind] = useState<"INDIVIDUAL" | "LEGAL_ENTITY">("INDIVIDUAL");
+  // 🌟 NOVO: Estado para gerenciar o vínculo da pessoa
+  const [role, setRole] = useState<"SUPPLIER" | "CUSTOMER" | "BOTH">("BOTH");
+
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
   const [nickname, setNickname] = useState("");
@@ -33,6 +36,7 @@ export function TabPessoas() {
   const resetForm = () => {
     setSelectedId(null);
     setName(""); setDocument(""); setNickname(""); setKind("INDIVIDUAL");
+    setRole("BOTH"); // 🌟 Reseta pro default
     setEmails([{ email: "" }]);
     setPhones([{ number: "", type: "MOBILE" }]);
     setAddresses([{ street: "", number: "", neighborhood: "", complement: "", city: "", state: "", zipCode: "" }]);
@@ -42,6 +46,8 @@ export function TabPessoas() {
     const p = item.raw;
     setSelectedId(p.id);
     setKind(p.personType || "INDIVIDUAL");
+    // 🌟 Carrega o vínculo salvo no banco
+    setRole(p.role || "BOTH");
     setName(p.name || "");
     setDocument(p.cpf || p.cnpj || "");
     setNickname(p.nickname || p.tradeName || "");
@@ -57,7 +63,15 @@ export function TabPessoas() {
       const validPhones = phones.filter((p) => p.number.trim() !== "");
       const validAddresses = addresses.filter((a) => a.street.trim() !== "" && a.zipCode.trim() !== "");
 
-      const payload = { name, nickname, addressesList: validAddresses, phoneList: validPhones, emailList: validEmails };
+      const payload = { 
+        name, 
+        nickname, 
+        addressesList: validAddresses, 
+        phoneList: validPhones, 
+        emailList: validEmails, 
+        role: role 
+      };
+
       const isLegal = kind === "LEGAL_ENTITY";
       const finalPayload = isLegal 
         ? { ...payload, CNPJ: document, tradeName: nickname, personType: "LEGAL_ENTITY" } 
@@ -67,28 +81,44 @@ export function TabPessoas() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["people"] });
-      toast.success(selectedId ? "Pessoa atualizada!" : "Pessoa cadastrada!");
+      toast.success(selectedId ? "Cadastro atualizado com sucesso!" : "Cadastro realizado com sucesso!");
       setOpenModal(false);
     },
     onError: (err: any) => toast.error(err.message),
   });
 
+  // Função auxiliar para traduzir o Enum na lista
+  const translateRole = (r: string) => {
+    if (r === "SUPPLIER") return "Fornecedor";
+    if (r === "CUSTOMER") return "Cliente";
+    return "Cliente e Fornecedor";
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => { resetForm(); setOpenModal(true); }} className="rounded-full">
-          <Plus className="mr-2 size-4" /> Nova Pessoa
+          <Plus className="mr-2 size-4" /> Novo Cadastro
         </Button>
       </div>
 
       <InteractiveList
-        items={(people.data ?? []).map((p) => ({
-          id: p.id,
-          title: p.nickname ?? p.name,
-          subtitle: `${p.personType === "INDIVIDUAL" ? "Pessoa física" : "Pessoa jurídica"} — ${formatDocument(p.cpf) || formatDocument(p.cnpj)}`,
-          active: true,
-          raw: { ...p, category: "pessoas" },
-        }))}
+        items={(people.data ?? []).map((p) => {
+          // 🌟 1. Tenta formatar o documento, se existir
+          const doc = p.cpf ? formatDocument(p.cpf) : (p.cnpj ? formatDocument(p.cnpj) : null);
+          
+          // 🌟 2. Só cria o separador " — 000.000.000-00" se o 'doc' tiver valor
+          const docDisplay = doc ? ` — ${doc}` : "";
+
+          return {
+            id: p.id,
+            title: p.name,
+            // 🌟 3. Monta o subtítulo dinamicamente e sem espaços/traços vazios
+            subtitle: `${p.personType === "INDIVIDUAL" ? "Pessoa física" : "Pessoa jurídica"}${docDisplay} · ${translateRole(p.role)}`,
+            active: true,
+            raw: { ...p, category: "pessoas" },
+          };
+        })}
         onSelect={openForEdit}
       />
 
@@ -97,7 +127,7 @@ export function TabPessoas() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selectedId ? <Pencil className="size-4 text-primary" /> : <Plus className="size-4 text-primary" />}
-              {selectedId ? "Editar Pessoa" : "Nova Pessoa"}
+              {selectedId ? "Editar Cadastro" : "Novo Cadastro"}
             </DialogTitle>
           </DialogHeader>
 
@@ -113,6 +143,22 @@ export function TabPessoas() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* 🌟 NOVA CAIXA DE SELEÇÃO: VÍNCULO */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1">
+                  <Briefcase className="size-3 text-muted-foreground" /> Vínculo
+                </Label>
+                <Select value={role} onValueChange={(v: "SUPPLIER" | "CUSTOMER" | "BOTH") => setRole(v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SUPPLIER">Apenas Fornecedor</SelectItem>
+                    <SelectItem value="CUSTOMER">Apenas Cliente</SelectItem>
+                    <SelectItem value="BOTH">Ambos (Cliente e Fornecedor)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 <Label>{kind === "INDIVIDUAL" ? "Nome Completo" : "Razão Social"}</Label>
                 <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -190,7 +236,7 @@ export function TabPessoas() {
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpenModal(false)} className="rounded-full">Cancelar</Button>
-            <Button disabled={!name || !document || saveMutation.isPending} onClick={() => saveMutation.mutate()} className="rounded-full">
+            <Button disabled={!name || !document || saveMutation.isPending} onClick={() => saveMutation.mutate()} className="rounded-full bg-primary text-primary-foreground">
               {saveMutation.isPending ? "Salvando..." : "Salvar no Banco"}
             </Button>
           </DialogFooter>

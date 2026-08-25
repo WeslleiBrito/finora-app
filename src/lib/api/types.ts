@@ -20,6 +20,7 @@ export type PaymentType =
   | "BOLETO"
   | "TICKET";
 export type AccountKind = "CHECKING" | "SAVINGS" | "INVESTMENT" | "PAYMENT" | "WALLET";
+export type PersonRole = "CUSTOMER" | "SUPPLIER" | "BOTH"
 
 export interface BankResponseDTO {
   id: UUID;
@@ -58,6 +59,7 @@ export interface PersonResponseDTO {
   cnpj?: string;
   tradeName?: string;
   personType: PersonType;
+  role: PersonRole;
   phones: PhoneResponseDTO[];
   emails: EmailResponseDTO[];
   addresses: AddressResponseDTO[];
@@ -122,7 +124,7 @@ export interface InvoiceResponseDTO {
   id: UUID;
   accountId: UUID;
   operationTypeId: UUID;
-  personId: UUID;
+  person: PersonResponseCompactDTO;
   issueDate: string;
   status: InvoiceStatus;
   quantityInstallments: number;
@@ -169,6 +171,8 @@ export interface InstallmentDTO {
   amount: number;
   dueDate: string;
   instrument: UUID;
+  accountId: UUID;
+  movementDirection: MovementDirection;
 }
 
 export interface CreateInvoiceRequestDTO {
@@ -257,6 +261,7 @@ export interface PersonCreatePhysicalRequestDTO {
   name: string;
   CPF: string;
   nickname?: string;
+  role: PersonRole;
   addressesList: AddressDTO[];
   phoneList: PhoneDTO[];
   emailList: EmailDTO[];
@@ -266,6 +271,7 @@ export interface PersonCreateLegalRequestDTO {
   name: string;
   CNPJ: string;
   tradeName?: string;
+  role: PersonRole;
   addressesList: AddressDTO[];
   phoneList: PhoneDTO[];
   emailList: EmailDTO[];
@@ -274,3 +280,14 @@ export interface PersonCreateLegalRequestDTO {
 export interface ReversalRequestDTO {
   reason?: string
 }
+
+// Dicionário de tradução e ícones
+export const PaymentTypeMeta: Record<string, string> = {
+  CREDIT_CARD: "Cartão de Crédito",
+  DEBIT_CARD: "Cartão de Débito",
+  PIX: "Pix",
+  BANK_TRANSFER: "Transferência Bancária",
+  CASH: "Dinheiro / Espécie",
+  BOLETO: "Boleto Bancário",
+  TICKET: "Vale / Ticket"
+};

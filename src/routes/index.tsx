@@ -130,10 +130,6 @@ function Landing() {
           </div>
         </section>
       </main>
-
-      <footer className="mx-auto w-full max-w-6xl px-5 py-10 text-sm text-muted-foreground">
-        Poupi — protótipo conectado ao modelo de dados do seu backend.
-      </footer>
     </div>
   );
 }

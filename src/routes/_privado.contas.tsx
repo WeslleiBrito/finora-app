@@ -2,7 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Banknote, Landmark, PiggyBank, TrendingUp, Wallet, History, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { 
+  Banknote, 
+  Landmark, 
+  PiggyBank, 
+  TrendingUp, 
+  Wallet, 
+  History, 
+  ArrowDownCircle, 
+  ArrowUpCircle, 
+  ArrowRightLeft, 
+  Info // 🌟 Ícone de informação adicionado
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app/page-header";
 import { ActiveBadge } from "@/components/app/status-badge";
@@ -24,6 +35,7 @@ import { accountsQuery, banksQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
 import type { AccountKind } from "@/lib/api/types";
 import { formatMoney } from "@/lib/format";
+import { TransferDialog } from "@/components/modals/transfer-dialog";
 
 export const Route = createFileRoute("/_privado/contas")({
   head: () => ({
@@ -57,8 +69,8 @@ function AccountsPage() {
   const [balance, setBalance] = useState("0");
   const [overdraft, setOverdraft] = useState("0");
 
-  // 🌟 ESTADOS DO MODAL DE EXTRATO
   const [statementOpen, setStatementOpen] = useState(false);
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<any>(null);
 
   const create = useMutation({
@@ -116,91 +128,96 @@ function AccountsPage() {
         title="Suas contas"
         description="Onde o seu dinheiro está guardado hoje."
         action={
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button className="rounded-full">Nova conta</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Nova conta</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="acc-name">Apelido da conta</Label>
-                  <Input id="acc-name" value={name} onChange={(e) => setName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Tipo</Label>
-                  <Select value={kind} onValueChange={(v) => setKind(v as AccountKind)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(kindMeta).map(([value, meta]) => (
-                        <SelectItem key={value} value={value}>
-                          {meta.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {kind !== "WALLET" ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" className="rounded-full bg-background" onClick={() => setTransferModalOpen(true)}>
+              <ArrowRightLeft className="size-4 mr-2" /> Transferir
+            </Button>
+
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button className="rounded-full">Nova conta</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Nova conta</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Banco</Label>
-                    <Select value={bankId} onValueChange={setBankId}>
+                    <Label htmlFor="acc-name">Apelido da conta</Label>
+                    <Input id="acc-name" value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Tipo</Label>
+                    <Select value={kind} onValueChange={(v) => setKind(v as AccountKind)}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione" />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(banks.data ?? []).map((b) => (
-                          <SelectItem key={b.id} value={b.id}>
-                            {b.name}
+                        {Object.entries(kindMeta).map(([value, meta]) => (
+                          <SelectItem key={value} value={value}>
+                            {meta.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                ) : null}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-balance">Saldo inicial</Label>
-                    <Input
-                      id="acc-balance"
-                      type="number"
-                      step="0.01"
-                      value={balance}
-                      onChange={(e) => setBalance(e.target.value)}
-                    />
-                  </div>
-                  {kind === "CHECKING" ? (
+                  {kind !== "WALLET" ? (
                     <div className="space-y-2">
-                      <Label htmlFor="acc-overdraft">Cheque especial</Label>
-                      <Input
-                        id="acc-overdraft"
-                        type="number"
-                        step="0.01"
-                        value={overdraft}
-                        onChange={(e) => setOverdraft(e.target.value)}
-                      />
+                      <Label>Banco</Label>
+                      <Select value={bankId} onValueChange={setBankId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(banks.data ?? []).map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   ) : null}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="acc-balance">Saldo inicial</Label>
+                      <Input
+                        id="acc-balance"
+                        type="number"
+                        step="0.01"
+                        value={balance}
+                        onChange={(e) => setBalance(e.target.value)}
+                      />
+                    </div>
+                    {kind === "CHECKING" ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="acc-overdraft">Cheque especial</Label>
+                        <Input
+                          id="acc-overdraft"
+                          type="number"
+                          step="0.01"
+                          value={overdraft}
+                          onChange={(e) => setOverdraft(e.target.value)}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  className="rounded-full"
-                  disabled={!name || create.isPending}
-                  onClick={() => create.mutate()}
-                >
-                  Criar conta
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <Button
+                    className="rounded-full"
+                    disabled={!name || create.isPending}
+                    onClick={() => create.mutate()}
+                  >
+                    Criar conta
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
 
-      {/* 🌟 GRID DE CONTAS */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {(accounts.data ?? []).map((account) => {
           const meta = kindMeta[account.type as AccountKind] ?? {
@@ -235,7 +252,6 @@ function AccountsPage() {
                 </div>
               </div>
 
-              {/* 🌟 BOTÕES DE AÇÃO DO CARD */}
               <div className="mt-5 flex gap-2 w-full pt-4 border-t">
                 <Button
                   variant="secondary"
@@ -260,7 +276,6 @@ function AccountsPage() {
         })}
       </div>
 
-      {/* 🌟 MODAL DE EXTRATO (Histórico de Transações) */}
       <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
         <DialogContent className="sm:max-w-2xl p-0 overflow-hidden max-h-[85vh] flex flex-col">
           <DialogHeader className="p-6 pb-4 border-b bg-muted/30 shrink-0">
@@ -276,11 +291,30 @@ function AccountsPage() {
                 {formatMoney(selectedAccount?.balance || 0)}
               </span>
             </div>
+
+            {/* 🌟 MENSAGEM DIDÁTICA DO SALDO INICIAL CORRIGIDA (Alto Contraste) */}
+            {selectedAccount?.initialValue > 0 && (
+              <div className="mt-3 flex items-start gap-2 bg-inflow/10 p-3 rounded-lg border border-inflow/30 text-xs text-foreground">
+                <Info className="size-4 shrink-0 mt-0.5 text-inflow" />
+                <p>
+                  O saldo atual reflete as transações abaixo, adicionadas ao <strong className="text-inflow">saldo inicial de {formatMoney(selectedAccount.initialValue)}</strong> informado na criação desta conta.
+                </p>
+              </div>
+            )}
+            {selectedAccount?.initialValue < 0 && (
+              <div className="mt-3 flex items-start gap-2 bg-destructive/10 p-3 rounded-lg border border-destructive/30 text-xs text-foreground">
+                <Info className="size-4 shrink-0 mt-0.5 text-destructive" />
+                <p>
+                  Atenção: O saldo atual está calculado a partir de um <strong className="text-destructive">saldo inicial negativo de {formatMoney(selectedAccount.initialValue)}</strong> informado na criação desta conta.
+                </p>
+              </div>
+            )}
+
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto">
             <Table>
-              <TableHeader className="bg-muted/10 sticky top-0 backdrop-blur-md">
+              <TableHeader className="bg-muted/10 sticky top-0 backdrop-blur-md z-10">
                 <TableRow>
                   <TableHead className="w-[100px]">Data</TableHead>
                   <TableHead>Descrição</TableHead>
@@ -289,7 +323,6 @@ function AccountsPage() {
               </TableHeader>
               <TableBody>
                 {selectedAccount?.transactions && selectedAccount.transactions.length > 0 ? (
-                  // Ordenando as transações da mais recente para a mais antiga
                   [...selectedAccount.transactions]
                     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                     .map((tx: any) => {
@@ -342,6 +375,8 @@ function AccountsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TransferDialog open={transferModalOpen} onOpenChange={setTransferModalOpen} />
     </>
   );
 }

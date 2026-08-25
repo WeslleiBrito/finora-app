@@ -43,7 +43,7 @@ function SignupPage() {
       const token = await userCredential.user.getIdToken();
 
       // 3. Envia para o Spring Boot (Mude localhost pelo seu IP ou URL da API se necessário)
-      const response = await fetch("https://constraint-five-eds-ciao.trycloudflare.com/api/users/sync", {
+      const response = await fetch("http://localhost:8080/api/users/sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

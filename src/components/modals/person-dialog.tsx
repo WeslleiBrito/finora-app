@@ -1,44 +1,60 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Building2, User as UserIcon, ChevronDown, ChevronUp } from "lucide-react";
+import { Building2, User as UserIcon, ChevronDown, ChevronUp, UserPlus } from "lucide-react";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api/store";
+import { PersonRole } from "@/lib/api/types"
 
 interface PersonDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // 🌟 Ampliando o tipo para string resolve o erro de 'MovementType' do TypeScript
+  direction?: "PAYMENT" | "RECEIPT" | string; 
   onSuccess?: (newPersonId: string) => void;
 }
 
-export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProps) {
+export function PersonDialog({ open, onOpenChange, direction = "PAYMENT", onSuccess }: PersonDialogProps) {
   const queryClient = useQueryClient();
 
-  // 1. Estados da UX de Expansão
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [personType, setPersonType] = useState<"PHYSICAL" | "LEGAL">("PHYSICAL");
 
-  // 2. Estados dos Campos
+  // 🌟 NOVO: Estado limpo e simples com Checkbox
+  const [isBoth, setIsBoth] = useState(false);
+
   const [name, setName] = useState("");
-  
-  // Campos Avançados
-  const [document, setDocument] = useState(""); // Serve para CPF ou CNPJ
-  const [nickname, setNickname] = useState(""); // Apelido ou Nome Fantasia
+  const [document, setDocument] = useState(""); 
+  const [nickname, setNickname] = useState(""); 
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
 
-  // Limpa o formulário ao fechar
+  const isPayment = direction === "PAYMENT";
+  
+  // Reseta o checkbox sempre que o modal abrir
+  useEffect(() => {
+    if (open) {
+      setIsBoth(false);
+    }
+  }, [open]);
+
+  const titleLabel = isPayment ? "Novo Fornecedor" : "Novo Cliente";
+  const iconColor = isPayment ? "text-outflow" : "text-inflow";
+  const buttonBg = isPayment ? "bg-outflow hover:bg-outflow/90 text-white" : "bg-inflow hover:bg-inflow/90 text-white";
+
   const resetForm = () => {
     setName("");
     setDocument("");
     setNickname("");
     setPhone("");
     setEmail("");
+    setIsBoth(false);
     setIsAdvanced(false);
   };
 
@@ -47,26 +63,29 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
     if (!isOpen) resetForm();
   };
 
-  // 3. Mutação
   const saveMutation = useMutation({
     mutationFn: () => {
-      // Monta as listas opcionais apenas se houver preenchimento
       const phoneList = phone ? [{ number: phone, type: "MOBILE" }] : undefined;
       const emailList = email ? [{ email: email }] : undefined;
+
+      // 🌟 Define a "Role" (Vínculo) inteligentemente antes de enviar pro Backend
+      const role: PersonRole = isBoth ? "BOTH" : (isPayment ? "SUPPLIER" : "CUSTOMER");
 
       if (personType === "PHYSICAL") {
         return api.createPhysicalPerson({
           name,
-          CPF: document || undefined, // Manda undefined se estiver vazio
+          CPF: document || undefined, 
           nickname: nickname || undefined,
+          role, 
           phoneList,
           emailList,
         });
       } else {
         return api.createLegalPerson({
           name,
-          CNPJ: document || undefined, // Manda undefined se estiver vazio
+          CNPJ: document || undefined, 
           tradeName: nickname || undefined,
+          role, 
           phoneList,
           emailList,
         });
@@ -74,7 +93,7 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
     },
     onSuccess: (response) => {
       void queryClient.invalidateQueries({ queryKey: ["people"] });
-      toast.success(personType === "PHYSICAL" ? "Pessoa cadastrada com sucesso!" : "Empresa cadastrada com sucesso!");
+      toast.success("Cadastro realizado com sucesso!");
       onSuccess?.(response.id);
       handleOpenChange(false);
     },
@@ -86,32 +105,43 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
       <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Plus className="size-5 text-primary" />
-            Novo Fornecedor / Cliente
+            <UserPlus className={`size-5 ${iconColor}`} />
+            {titleLabel}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          
-          {/* ========================================= */}
-          {/* ÁREA BÁSICA (Sempre visível)              */}
-          {/* ========================================= */}
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Tipo de Contato</Label>
-              <Tabs value={personType} onValueChange={(v) => {
-                setPersonType(v as "PHYSICAL" | "LEGAL");
-                setDocument(""); // Limpa o documento ao trocar de tipo
-              }}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="PHYSICAL" className="flex items-center gap-2">
-                    <UserIcon className="size-4" /> Pessoa Física
-                  </TabsTrigger>
-                  <TabsTrigger value="LEGAL" className="flex items-center gap-2">
-                    <Building2 className="size-4" /> Empresa (PJ)
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
+            
+            <div className="grid grid-cols-[1.5fr_1fr] gap-4 items-end">
+              <div className="space-y-2">
+                <Label>Tipo de Pessoa</Label>
+                <Tabs value={personType} onValueChange={(v) => {
+                  setPersonType(v as "PHYSICAL" | "LEGAL");
+                  setDocument("");
+                }}>
+                  <TabsList className="grid w-full grid-cols-2 h-9">
+                    <TabsTrigger value="PHYSICAL" className="flex items-center gap-1 text-xs">
+                      <UserIcon className="size-3" /> Física
+                    </TabsTrigger>
+                    <TabsTrigger value="LEGAL" className="flex items-center gap-1 text-xs">
+                      <Building2 className="size-3" /> Jurídica
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
+              {/* 🌟 O CHECKBOX DE VÍNCULO MÚLTIPLO */}
+              <div className="flex items-center space-x-2 h-9 border rounded-lg px-3 bg-muted/20">
+                <Checkbox 
+                  id="role-both" 
+                  checked={isBoth} 
+                  onCheckedChange={(checked) => setIsBoth(!!checked)} 
+                />
+                <Label htmlFor="role-both" className="text-xs font-medium cursor-pointer leading-none">
+                  Também é {isPayment ? "Cliente" : "Fornecedor"}
+                </Label>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -125,9 +155,6 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
             </div>
           </div>
 
-          {/* ========================================= */}
-          {/* BOTÃO DE EXPANSÃO                         */}
-          {/* ========================================= */}
           <div className="flex justify-center border-b pb-2">
             <Button 
               type="button" 
@@ -144,56 +171,29 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
             </Button>
           </div>
 
-          {/* ========================================= */}
-          {/* ÁREA AVANÇADA (Progressive Disclosure)    */}
-          {/* ========================================= */}
           {isAdvanced && (
             <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
-              
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>{personType === "PHYSICAL" ? "CPF (Opcional)" : "CNPJ (Opcional)"}</Label>
-                  <Input 
-                    placeholder="Apenas números"
-                    value={document} 
-                    onChange={(e) => setDocument(e.target.value)} 
-                  />
+                  <Input placeholder="Apenas números" value={document} onChange={(e) => setDocument(e.target.value)} />
                 </div>
-                
                 <div className="space-y-2">
                   <Label>{personType === "PHYSICAL" ? "Apelido (Opcional)" : "Nome Fantasia (Opcional)"}</Label>
-                  <Input 
-                    placeholder="Como você prefere chamar"
-                    value={nickname} 
-                    onChange={(e) => setNickname(e.target.value)} 
-                  />
+                  <Input placeholder="Como você prefere chamar" value={nickname} onChange={(e) => setNickname(e.target.value)} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Telefone Principal</Label>
-                  <Input 
-                    placeholder="(00) 00000-0000"
-                    value={phone} 
-                    onChange={(e) => setPhone(e.target.value)} 
-                  />
+                  <Input placeholder="(00) 00000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} />
                 </div>
-                
                 <div className="space-y-2">
                   <Label>E-mail Principal</Label>
-                  <Input 
-                    type="email"
-                    placeholder="email@exemplo.com"
-                    value={email} 
-                    onChange={(e) => setEmail(e.target.value)} 
-                  />
+                  <Input type="email" placeholder="email@exemplo.com" value={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
               </div>
-              
-              <p className="text-[10px] text-muted-foreground text-center">
-                Você poderá adicionar endereços e mais contatos editando este perfil depois.
-              </p>
             </div>
           )}
         </div>
@@ -203,9 +203,9 @@ export function PersonDialog({ open, onOpenChange, onSuccess }: PersonDialogProp
           <Button 
             disabled={name.length < 3 || saveMutation.isPending} 
             onClick={() => saveMutation.mutate()} 
-            className="rounded-full"
+            className={`rounded-full ${buttonBg}`}
           >
-            {saveMutation.isPending ? "Salvando..." : "Salvar Contato"}
+            {saveMutation.isPending ? "Salvando..." : "Salvar Cadastro"}
           </Button>
         </DialogFooter>
       </DialogContent>

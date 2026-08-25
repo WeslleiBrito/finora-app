@@ -20,7 +20,7 @@ import type {
 } from "./types";
 
 // URL base da sua API (ajuste se mudar o túnel do Cloudflare)
-const API_BASE_URL = "https://sculpture-cute-apt-watching.trycloudflare.com/api";
+const API_BASE_URL = "http://localhost:8080/api";
 
 /**
  * Função centralizada para fazer requisições à API.
@@ -307,5 +307,22 @@ export const api = {
       body: JSON.stringify(body) 
     });
   },
+
+  async transferAccounts(body: {
+    sourceAccountId: string; 
+    destinationAccountId: string; 
+    amount: number; 
+    transferDate: string; 
+    observations?: string
+  }){
+
+    return fetchApi<any>(
+      `/transactions/transfer`,
+      {
+        method: "POST",
+        body: JSON.stringify(body)
+      }
+    )
+  }
 };
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calculator, CheckCircle2, AlertCircle, Plus } from "lucide-react";
+import { Calculator, CheckCircle2, AlertCircle, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 import { accountsQuery, operationTypesQuery, peopleQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
-import type { MovementType } from "@/lib/api/types";
+import type { InstallmentDTO, MovementType } from "@/lib/api/types";
 import { addMonths, formatMoney, todayIso } from "@/lib/format";
 
 import { PersonDialog } from "./person-dialog";
@@ -34,6 +34,10 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
   const [personModalOpen, setPersonModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
 
+  // Estados de Busca (Para listas grandes)
+  const [typeSearch, setTypeSearch] = useState("");
+  const [personSearch, setPersonSearch] = useState("");
+
   // Estados Gerais
   const [direction, setDirection] = useState<MovementType>(defaultDirection);
   const [operationTypeId, setOperationTypeId] = useState("");
@@ -42,7 +46,6 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
   const [quantity, setQuantity] = useState("1");
   const [firstDueDate, setFirstDueDate] = useState(todayIso());
 
-  // Estados Padrão (Usados apenas para gerar as parcelas em massa)
   const [globalAccountId, setGlobalAccountId] = useState("");
   const [globalInstrumentId, setGlobalInstrumentId] = useState("");
 
@@ -61,18 +64,40 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
       setInstallments([]);
       setGlobalAccountId("");
       setGlobalInstrumentId("");
+      setTypeSearch("");
+      setPersonSearch("");
     }
   };
 
+  // Dinâmica de Textos Baseada na Rota
+  const isPayment = direction === "PAYMENT";
+  const personLabel = isPayment ? "Fornecedor" : "Cliente";
+  const colorClassText = isPayment ? "text-outflow" : "text-inflow";
+
+  // Listas Filtradas pela Busca
   const filteredTypes = useMemo(() => {
-    return (types.data ?? []).filter((t: any) => t.movementType === direction);
-  }, [types.data, direction]);
+    return (types.data ?? [])
+      .filter((t: any) => t.movementType === direction)
+      .filter((t: any) => t.name.toLowerCase().includes(typeSearch.toLowerCase()));
+  }, [types.data, direction, typeSearch]);
 
-  // ==========================================
-  // FILTRAGEM INTELIGENTE (GLOBAL E INDIVIDUAL)
-  // ==========================================
+  // 🌟 FILTRO DE PESSOAS ATIVADO (Role + Texto)
+  const filteredPeople = useMemo(() => {
+    return (people.data ?? [])
+      .filter((p: any) => {
+        // 1. Filtro de Vínculo (Quem mandou a rota)
+        const isRoleValid = isPayment 
+          ? (p.role === "SUPPLIER" || p.role === "BOTH") 
+          : (p.role === "CUSTOMER" || p.role === "BOTH");
+        
+        if (!isRoleValid) return false;
 
-  // Filtra instrumentos globais baseados na conta global selecionada
+        // 2. Filtro de Texto (Busca)
+        const searchName = p.nickname ?? p.name;
+        return searchName.toLowerCase().includes(personSearch.toLowerCase());
+      });
+  }, [people.data, personSearch, isPayment]);
+
   const globalSelectedAccount = (accounts.data ?? []).find((a: any) => a.id === globalAccountId);
   const isGlobalWallet = globalSelectedAccount?.type === "WALLET";
   
@@ -81,7 +106,6 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
     return i.paymentType !== "CASH";
   });
 
-  // Limpa o instrumento global se a conta global mudar para um tipo incompatível
   useEffect(() => {
     if (globalAccountId && globalInstrumentId) {
       const currentInst = (instruments.data ?? []).find((i: any) => i.id === globalInstrumentId);
@@ -90,38 +114,30 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
     }
   }, [globalAccountId]);
 
-
   const handleGenerateInstallments = () => {
     if (!globalAccountId || !globalInstrumentId) {
       toast.error("Selecione a Conta e o Instrumento padrão primeiro!");
       return;
     }
-
     const total = Math.round((Number(totalAmount) || 0) * 100);
     const count = Math.max(1, Math.min(Number(quantity) || 1, 36));
     const base = Math.floor(total / count);
 
-    // Geração injetando a Conta e o Instrumento Padrão em cada parcela
-    const generated = Array.from({ length: count }, (_, i) => ({
+    const generated: Array<InstallmentDTO> = Array.from({ length: count }, (_, i) => ({
       parcelNumber: i + 1,
       amount: (i === count - 1 ? total - base * (count - 1) : base) / 100,
       dueDate: addMonths(firstDueDate, i),
       instrument: globalInstrumentId,
-      accountId: globalAccountId, 
+      accountId: globalAccountId,
+      movementDirection: isPayment ? "OUTFLOW" : "INFLOW"
     }));
-
     setInstallments(generated);
   };
 
   const updateInstallment = (index: number, field: string, value: any) => {
     const updated = [...installments];
     updated[index] = { ...updated[index], [field]: value };
-
-    // 🌟 REGRA DE UX: Se mudou a conta de uma parcela individual, limpa o instrumento dela!
-    if (field === "accountId") {
-      updated[index].instrument = "";
-    }
-
+    if (field === "accountId") updated[index].instrument = "";
     setInstallments(updated);
   };
 
@@ -143,54 +159,88 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
 
   const currentSum = installments.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const isSumValid = Math.abs((Number(totalAmount) || 0) - currentSum) < 0.01;
-
-  // Valida se TODAS as parcelas possuem Conta e Instrumento
-  const canSave =
-    operationTypeId && personId && installments.length > 0 && isSumValid &&
-    installments.every(i => i.instrument && i.accountId && i.dueDate && i.amount > 0);
+  const canSave = operationTypeId && personId && installments.length > 0 && isSumValid && installments.every(i => i.instrument && i.accountId && i.dueDate && i.amount > 0);
 
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0">
           <div className="border-b bg-muted/20 p-6">
-            <DialogTitle className="text-xl">Novo Lançamento</DialogTitle>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <span className={`size-3 rounded-full ${isPayment ? 'bg-outflow' : 'bg-inflow'}`} />
+              Novo Lançamento
+            </DialogTitle>
             <p className="text-sm text-muted-foreground mt-1">Gere as parcelas e ajuste como quiser.</p>
           </div>
 
           <div className="grid gap-0 lg:grid-cols-[1fr_1.3fr] p-6 pt-2">
-            {/* COLUNA ESQUERDA: DADOS GERAIS E MOLDE PADRÃO */}
             <section className="space-y-4 pr-6 lg:border-r">
-              <div className="w-full flex items-center justify-center p-3 rounded-lg bg-muted/50 border border-primary/20 text-primary font-semibold text-sm">
-                Lançamento de {direction === "PAYMENT" ? "Saída (Despesa)" : "Entrada (Receita)"}
+              <div className={`w-full flex items-center justify-center p-3 rounded-lg bg-muted/50 border text-sm font-bold ${isPayment ? 'border-outflow/20 text-outflow' : 'border-inflow/20 text-inflow'}`}>
+                Lançamento de {isPayment ? "Saída (Despesa)" : "Entrada (Receita)"}
               </div>
 
               <div className="space-y-2 mt-2">
                 <div className="flex items-center justify-between">
                   <Label>Tipo de operação</Label>
-                  <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-[10px] text-primary hover:bg-transparent">
-                    + Nova Categoria
+                  <Button type="button" variant="ghost" size="sm" className={`h-auto p-0 text-[10px] hover:bg-transparent ${colorClassText}`}>
+                    Nova Categoria
                   </Button>
                 </div>
                 <Select value={operationTypeId} onValueChange={setOperationTypeId}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
-                    {filteredTypes.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                    <div className="p-2 sticky top-0 bg-popover z-10 border-b">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-3 w-3 text-muted-foreground" />
+                        <Input 
+                          placeholder="Buscar categoria..." 
+                          className="pl-7 h-8 text-xs" 
+                          value={typeSearch} 
+                          onChange={(e) => setTypeSearch(e.target.value)}
+                          onKeyDown={(e) => e.stopPropagation()} 
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {filteredTypes.length === 0 ? (
+                        <p className="text-xs text-center text-muted-foreground py-4">Nenhuma categoria encontrada.</p>
+                      ) : (
+                        filteredTypes.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)
+                      )}
+                    </div>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Fornecedor / Cliente</Label>
-                  <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-[10px] text-primary hover:bg-transparent hover:underline" onClick={() => setPersonModalOpen(true)}>
-                    <Plus className="mr-1 size-3" /> Cadastro rápido
+                  <Label>{personLabel}</Label>
+                  <Button type="button" variant="ghost" size="sm" className={`h-auto p-0 text-[10px] hover:bg-transparent hover:underline ${colorClassText}`} onClick={() => setPersonModalOpen(true)}>
+                    Novo {personLabel}
                   </Button>
                 </div>
                 <Select value={personId} onValueChange={setPersonId}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
-                    {(people.data ?? []).map((p: any) => <SelectItem key={p.id} value={p.id}>{p.nickname ?? p.name}</SelectItem>)}
+                    <div className="p-2 sticky top-0 bg-popover z-10 border-b">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-3 w-3 text-muted-foreground" />
+                        <Input 
+                          placeholder={`Buscar ${personLabel.toLowerCase()}...`} 
+                          className="pl-7 h-8 text-xs" 
+                          value={personSearch} 
+                          onChange={(e) => setPersonSearch(e.target.value)}
+                          onKeyDown={(e) => e.stopPropagation()} 
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {filteredPeople.length === 0 ? (
+                        <p className="text-xs text-center text-muted-foreground py-4">Nenhum cadastro encontrado.</p>
+                      ) : (
+                        filteredPeople.map((p: any) => <SelectItem key={p.id} value={p.id}>{p.nickname ?? p.name}</SelectItem>)
+                      )}
+                    </div>
                   </SelectContent>
                 </Select>
               </div>
@@ -202,7 +252,7 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs">Conta Padrão</Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-[9px] text-primary hover:bg-transparent hover:underline" onClick={() => setAccountModalOpen(true)}>
+                      <Button type="button" variant="ghost" size="sm" className={`h-auto p-0 text-[9px] hover:bg-transparent hover:underline ${colorClassText}`} onClick={() => setAccountModalOpen(true)}>
                         Nova Conta
                       </Button>
                     </div>
@@ -247,7 +297,6 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
               </div>
             </section>
 
-            {/* COLUNA DIREITA: TABELA DE PARCELAS GERADAS */}
             <section className="flex flex-col pl-0 lg:pl-6 pt-6 lg:pt-0">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -270,8 +319,6 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
               ) : (
                 <div className="space-y-3 overflow-y-auto max-h-[380px] pr-2 pb-4">
                   {installments.map((p, index) => {
-                    
-                    // Lógica Dinâmica para os inputs individuais
                     const rowAccount = (accounts.data ?? []).find((a: any) => a.id === p.accountId);
                     const isRowWallet = rowAccount?.type === "WALLET";
                     const validRowInstruments = (instruments.data ?? []).filter((i: any) => {
@@ -281,22 +328,18 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
 
                     return (
                       <div key={p.parcelNumber} className="flex flex-col gap-2 rounded-xl bg-secondary/30 border p-3">
-                        {/* Linha 1: Vencimento e Valor */}
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-sm w-6 text-center shrink-0">{p.parcelNumber}ª</span>
-                          
                           <div className="flex-1 space-y-1">
                             <Label className="text-[10px] text-muted-foreground">Vencimento</Label>
                             <Input type="date" className="h-8 text-xs px-2" value={p.dueDate} onChange={(e) => updateInstallment(index, 'dueDate', e.target.value)} />
                           </div>
-
                           <div className="flex-1 space-y-1">
                             <Label className="text-[10px] text-muted-foreground">Valor (R$)</Label>
                             <Input type="number" step="0.01" className="h-8 text-xs px-2 font-semibold" value={p.amount} onChange={(e) => updateInstallment(index, 'amount', Number(e.target.value))} />
                           </div>
                         </div>
 
-                        {/* Linha 2: Conta e Instrumento da Parcela */}
                         <div className="flex items-center gap-2 pl-8">
                           <div className="flex-1 space-y-1">
                             <Label className="text-[10px] text-muted-foreground">Conta da Parcela:</Label>
@@ -307,7 +350,6 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                               </SelectContent>
                             </Select>
                           </div>
-
                           <div className="flex-1 space-y-1">
                             <Label className="text-[10px] text-muted-foreground">Forma (PIX, Dinheiro)</Label>
                             <Select value={p.instrument} onValueChange={(val) => updateInstallment(index, 'instrument', val)} disabled={!p.accountId}>
@@ -330,7 +372,7 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                 {!isSumValid && installments.length > 0 && (
                   <p className="text-xs text-destructive text-center mb-3">A soma das parcelas ({formatMoney(currentSum)}) difere do total do lançamento.</p>
                 )}
-                <Button className="w-full rounded-full" disabled={!canSave || create.isPending} onClick={() => create.mutate()}>
+                <Button className={`w-full rounded-full ${isPayment ? 'bg-outflow hover:bg-outflow/90' : 'bg-inflow hover:bg-inflow/90'}`} disabled={!canSave || create.isPending} onClick={() => create.mutate()}>
                   {create.isPending ? "Salvando..." : "Confirmar e Salvar Lançamento"}
                 </Button>
               </div>
@@ -339,7 +381,12 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
         </DialogContent>
       </Dialog>
 
-      <PersonDialog open={personModalOpen} onOpenChange={setPersonModalOpen} onSuccess={(newId) => setPersonId(newId)} />
+      <PersonDialog 
+        open={personModalOpen} 
+        onOpenChange={setPersonModalOpen} 
+        direction={direction === "PAYMENT" ? "PAYMENT" : "RECEIPT"} 
+        onSuccess={(newId) => setPersonId(newId)} 
+      />
       <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={(newId: string) => setGlobalAccountId(newId)} />
     </>
   );

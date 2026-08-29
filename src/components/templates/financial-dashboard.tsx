@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, isBefore, startOfDay, isSameMonth, parseISO, isAfter } from "date-fns";
-import { Plus, AlertCircle, ArrowDownToLine, CalendarClock, Search, ArrowDown, ArrowUp, ChevronsUpDown, Edit3, Trash2, CheckCircle2, Wallet, CreditCard } from "lucide-react";
+import { format, isBefore, startOfDay, isSameMonth, isAfter } from "date-fns";
 import { toast } from "sonner";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -17,7 +16,7 @@ import { Label } from "@/components/ui/label";
 
 import { api } from "@/lib/api/store";
 import { accountsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, parseLocalDate } from "@/lib/format";
 import { PaymentTypeMeta } from "@/lib/constants"; // 🌟 Importando do local correto
 
 // Modais
@@ -26,6 +25,25 @@ import { InstallmentDetailsDialog } from "@/components/modals/installment-detail
 import { BatchPaymentDialog } from "@/components/modals/batch-payment-dialog";
 import { PaymentDialog } from "@/components/modals/payment-dialog";
 import { EditInstallmentDialog } from "@/components/modals/edit-installment-dialog";
+import { 
+  Plus, 
+  AlertCircle, 
+  ArrowDownToLine, 
+  CalendarClock, 
+  Search, 
+  ArrowDown, 
+  ArrowUp, 
+  ChevronsUpDown, 
+  Edit3, 
+  Trash2, 
+  CheckCircle2, 
+  Wallet, 
+  CreditCard, 
+  QrCode, 
+  Banknote, 
+  Barcode, 
+  Landmark 
+} from "lucide-react";
 
 interface FinancialDashboardProps {
   direction: "PAYMENT" | "RECEIPT";
@@ -119,7 +137,7 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
           invoiceData: invoice,
           personName: invoice.person?.name || "Fornecedor desconhecido",
           remainingBalance: inst.amount - (inst.totalPaid || 0),
-          isOverdue: inst.status !== "FINALIZED" && isBefore(new Date(inst.dueDate), today),
+          isOverdue: inst.status !== "FINALIZED" && isBefore(parseLocalDate(inst.dueDate), today),
         }))
     );
   }, [invoices, direction]);
@@ -132,9 +150,9 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
       if (statusFilter === "UPCOMING") matchStatus = !p.isOverdue && p.status !== "FINALIZED";
       if (statusFilter === "PAID") matchStatus = p.status === "FINALIZED";
       let matchDate = true;
-      const dueDate = startOfDay(new Date(p.dueDate));
-      if (dateFrom && isBefore(dueDate, startOfDay(parseISO(dateFrom)))) matchDate = false;
-      if (dateTo && isAfter(dueDate, startOfDay(parseISO(dateTo)))) matchDate = false;
+      const dueDate = startOfDay(parseLocalDate(p.dueDate));
+      if (dateFrom && isBefore(dueDate, startOfDay(parseLocalDate(dateFrom)))) matchDate = false;
+      if (dateTo && isAfter(dueDate, startOfDay(parseLocalDate(dateTo)))) matchDate = false;
       let matchAccount = true;
       if (accountFilter !== "ALL" && p.accountId !== accountFilter) matchAccount = false;
       let matchInstrument = true;
@@ -145,7 +163,7 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
     result.sort((a, b) => {
       let valA, valB;
       switch (sortConfig.key) {
-        case 'dueDate': valA = new Date(a.dueDate).getTime(); valB = new Date(b.dueDate).getTime(); break;
+        case 'dueDate': valA = parseLocalDate(a.dueDate).getTime(); valB = parseLocalDate(b.dueDate).getTime(); break;
         case 'personName': valA = a.personName.toLowerCase(); valB = b.personName.toLowerCase(); break;
         default: valA = a[sortConfig.key]; valB = b[sortConfig.key];
       }
@@ -161,7 +179,7 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
     let overdue = 0; let thisMonth = 0; let paid = 0; let open = 0;
     
     processedPayables.forEach(p => {
-      const dueDate = new Date(p.dueDate);
+      const dueDate = parseLocalDate(p.dueDate);
       const effectivePaidForParcel = (p.transactions || []).reduce((acc: number, t: any) => {
         if (t.movementType === 'REVERSAL') return acc - (t.effectiveAmount || 0);
         return acc + (t.effectiveAmount || 0);
@@ -180,7 +198,7 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
     const grouped = processedPayables
       .filter(p => p.status !== "FINALIZED")
       .reduce((acc, curr) => {
-        const monthYear = format(new Date(curr.dueDate), 'MM/yyyy');
+        const monthYear = format(parseLocalDate(curr.dueDate), 'MM/yyyy');
         if (!acc[monthYear]) acc[monthYear] = 0;
         acc[monthYear] += curr.remainingBalance;
         return acc;
@@ -378,22 +396,43 @@ export function FinancialDashboard({ direction }: FinancialDashboardProps) {
                   >
                     <TableCell className="text-center" onClick={(e) => e.stopPropagation()}><Checkbox checked={isSelected} disabled={isPaid} onCheckedChange={() => toggleSelection(parcela)} /></TableCell>
                     <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">{format(new Date(parcela.dueDate), "dd/MM/yyyy")}{parcela.isOverdue && <AlertCircle className="size-4 text-destructive" />}</div>
+                      <div className="flex items-center gap-2">{format(parseLocalDate(parcela.dueDate), "dd/MM/yyyy")}{parcela.isOverdue && <AlertCircle className="size-4 text-destructive" />}</div>
                     </TableCell>
                     <TableCell><p className="font-semibold text-sm">{parcela.personName}</p></TableCell>
                     <TableCell><Badge variant="outline" className="text-xs font-mono">{parcela.parcelNumber}/{parcela.invoiceData.quantityInstallments}</Badge></TableCell>
                     
                     <TableCell>
                       {parcela.paymentInstrumentId ? (
-                        <Badge variant="secondary" className="text-xs font-mono">
-                          {(() => {
-                            const inst = instruments.find((i: any) => i.id === parcela.paymentInstrumentId);
-                            if (!inst) return "Desconhecida";
-                            return inst.cardHolderName || PaymentTypeMeta[inst.paymentType] || "Outros";
-                          })()}
-                        </Badge>
+                        (() => {
+                          const inst = instruments.find((i: any) => i.id === parcela.paymentInstrumentId);
+                          if (!inst) return <span className="text-xs text-muted-foreground">Desconhecida</span>;
+                          
+                          const name = inst.cardHolderName || PaymentTypeMeta[inst.paymentType] || inst.paymentType;
+                          const isCreditCard = inst.paymentType === "CREDIT_CARD";
+                          
+                          return (
+                            <Badge 
+                              variant={isCreditCard ? "default" : "secondary"} 
+                              className={`text-[11px] font-medium flex items-center w-fit gap-1.5 px-2 py-0.5 ${
+                                isCreditCard 
+                                ? 'bg-primary/10 text-primary hover:bg-primary/20 border-none' // 🌟 Destaque especial para Cartão de Crédito
+                                : 'bg-secondary/50 text-muted-foreground'
+                              }`}
+                            >
+                              {inst.paymentType === "CREDIT_CARD" && <CreditCard className="size-3" />}
+                              {inst.paymentType === "PIX" && <QrCode className="size-3" />}
+                              {inst.paymentType === "CASH" && <Banknote className="size-3" />}
+                              {inst.paymentType === "BANK_SLIP" && <Barcode className="size-3" />}
+                              {!["CREDIT_CARD", "PIX", "CASH", "BANK_SLIP"].includes(inst.paymentType) && <Landmark className="size-3" />}
+                              
+                              <span className="truncate max-w-[120px]">{name}</span>
+                            </Badge>
+                          );
+                        })()
                       ) : (
-                        <span className="text-xs text-muted-foreground opacity-50">Não definida</span>
+                        <Badge variant="outline" className="text-[11px] font-medium text-muted-foreground flex items-center w-fit gap-1.5 px-2 py-0.5 border-dashed">
+                          <Wallet className="size-3" /> Saldo da Conta
+                        </Badge>
                       )}
                     </TableCell>
 

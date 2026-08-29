@@ -208,11 +208,17 @@ function TransactionsPage() {
             ) : (
               filteredList.map((t) => {
                 const inflow = t.movementDirection === "INFLOW";
-                // 🌟 CORREÇÃO 2: 'as any' aplicado aqui também
                 const invoice = invoiceByInstallment.get(t.installmentId) as any;
                 const type = invoice ? typeById.get(invoice.operationTypeId) : undefined;
                 const personName = invoice?.person?.nickname || invoice?.person?.name;
                 const isReversal = t.movementType === "REVERSAL";
+                
+                // 🌟 NOVA LÓGICA DE VALIDAÇÃO DE SALDO NO FRONTEND
+                const account = accountById.get(t.accountId) as any;
+                const availableBalance = (account?.balance || 0) + (account?.type === "CHECKING" ? (account?.overdraftLimit || 0) : 0);
+                
+                // Bloqueia o estorno se for uma entrada e o valor for maior que o saldo disponível
+                const blocksReversalDueToFunds = inflow && t.effectiveAmount > availableBalance;
 
                 return (
                   <TableRow key={t.id} className={isReversal ? "bg-muted/10 opacity-80" : ""}>
@@ -250,7 +256,7 @@ function TransactionsPage() {
 
                     <TableCell>
                       <Badge variant="outline" className="text-xs font-normal">
-                        {accountById.get(t.accountId)?.name ?? "—"}
+                        {account?.name ?? "—"}
                       </Badge>
                     </TableCell>
 
@@ -274,16 +280,22 @@ function TransactionsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className={cn("rounded-full text-xs h-8", t.reversed ? "text-muted-foreground" : "hover:text-destructive hover:bg-destructive/10")}
-                          disabled={t.reversed || reverse.isPending}
+                          className={cn(
+                            "rounded-full text-xs h-8", 
+                            t.reversed || blocksReversalDueToFunds 
+                              ? "text-muted-foreground opacity-50 cursor-not-allowed" 
+                              : "hover:text-destructive hover:bg-destructive/10"
+                          )}
+                          disabled={t.reversed || reverse.isPending || blocksReversalDueToFunds}
                           onClick={() => {
                             if(window.confirm("Deseja realmente estornar esta transação?")) {
                               const reason = reversalMessages[t.movementType] || "Estorno de transação geral";
                               reverse.mutate({ id: t.id, reason });
                             }
                           }}
+                          title={blocksReversalDueToFunds ? "Saldo insuficiente para estornar esta entrada." : "Estornar transação"}
                         >
-                          {t.reversed ? "Estornada" : (
+                          {t.reversed ? "Estornada" : blocksReversalDueToFunds ? "Sem Saldo" : (
                             <><Undo2 className="size-3 mr-1" /> Estornar</>
                           )}
                         </Button>

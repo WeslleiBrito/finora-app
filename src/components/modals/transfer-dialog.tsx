@@ -56,7 +56,9 @@ export function TransferDialog({ open, onOpenChange }: TransferDialogProps) {
 
   // 🌟 Lógicas de Validação em Tempo Real
   const sourceAcc = (accounts.data ?? []).find((a: any) => a.id === sourceAccountId);
-  const availableBalance = (sourceAcc?.balance || 0) + (sourceAcc?.overdraftLimit || 0);
+  
+  // 🌟 REGRA CORRIGIDA: Limite de Cheque Especial só entra na soma se for Conta Corrente
+  const availableBalance = (sourceAcc?.balance || 0) + (sourceAcc?.type === "CHECKING" ? (sourceAcc?.overdraftLimit || 0) : 0);
   
   const isSameAccount = sourceAccountId && destinationAccountId && sourceAccountId === destinationAccountId;
   const isAmountInvalid = Number(amount) > availableBalance;
@@ -130,6 +132,11 @@ export function TransferDialog({ open, onOpenChange }: TransferDialogProps) {
                 onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : "")} 
                 className={isAmountInvalid ? "border-destructive text-destructive font-bold" : "font-bold text-lg"}
               />
+              {isAmountInvalid && (
+                <p className="text-[10px] text-destructive flex items-center gap-1 mt-1">
+                  <AlertTriangle className="size-3" /> Saldo insuficiente.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Data</Label>

@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownRight, ArrowUpRight, CalendarClock, PiggyBank, CreditCard, LayoutList } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { SummaryCard } from "@/components/app/summary-card";
 import { InstallmentStatusBadge } from "@/components/app/status-badge";
@@ -10,6 +11,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { accountsQuery, invoicesQuery, operationTypesQuery, transactionsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
 import { daysUntil, formatDate, formatMoney } from "@/lib/format";
 import { PaymentDialog } from "@/components/modals/payment-dialog";
+import { NewInvoiceDialog } from "@/components/modals/new-invoice-dialog";
+import { 
+  ArrowDownRight, 
+  ArrowUpRight, 
+  PiggyBank, 
+  CalendarClock, 
+  LayoutList, 
+  CreditCard
+} from "lucide-react";
 
 // Importando o dicionário inteligente criado acima
 import { PaymentTypeMeta } from "@/lib/constants";
@@ -28,6 +38,10 @@ function DashboardPage() {
   const [raioXTab, setRaioXTab] = useState("OUTFLOW");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedInstallmentToPay, setSelectedInstallmentToPay] = useState<any>(null);
+
+  // 🌟 ESTADOS DO NOVO MODAL DE LANÇAMENTO
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [invoiceDirection, setInvoiceDirection] = useState<"PAYMENT" | "RECEIPT">("PAYMENT");
 
   const accounts = useQuery(accountsQuery);
   const invoices = useQuery(invoicesQuery);
@@ -54,8 +68,9 @@ function DashboardPage() {
   const toPay = openInstallments.filter((i) => i.type?.movementType === "PAYMENT").reduce((sum, i) => sum + (i.installment.amount - i.installment.totalPaid), 0);
   const dueSoon = openInstallments.filter((i) => daysUntil(i.installment.dueDate) <= 15);
   
-  const chartData = buildMonthlyChart((transactions.data)?.filter((i) => i.movementType === "RECEIPT" || i.movementType === "PAYMENT") ?? []);
-
+  // 🌟 Agora o gráfico de barras também ignora as transações estornadas/canceladas
+  const chartData = buildMonthlyChart((transactions.data)?.filter((i) => (i.movementType === "RECEIPT" || i.movementType === "PAYMENT") && !i.reversed) ?? []);
+  
   const currentMonthPrefix = new Date().toISOString().slice(0, 7); 
   const opTypeByInstallmentId = new Map<string, string>();
   
@@ -64,7 +79,13 @@ function DashboardPage() {
     inv.installments.forEach(inst => opTypeByInstallmentId.set(inst.id, typeName));
   });
 
-  const thisMonthTransactions = (transactions.data ?? []).filter(t => t.paymentDate.startsWith(currentMonthPrefix) && !t.reversed && t.installmentId);
+  // 🌟 Agora ignoramos os estornos, pois a transação original já é cortada pelo !t.reversed
+  const thisMonthTransactions = (transactions.data ?? []).filter(t => 
+    t.paymentDate.startsWith(currentMonthPrefix) && 
+    !t.reversed && 
+    t.movementType !== "REVERSAL" && 
+    t.installmentId
+  );
 
   const outflowByCategory = new Map<string, number>();
   const outflowByInstrument = new Map<string, number>();
@@ -79,14 +100,29 @@ function DashboardPage() {
     const catName = opTypeByInstallmentId.get(t.installmentId) ?? "Outros";
     const instName = t.paymentInstrumentId ? (instrumentById.get(t.paymentInstrumentId) ?? "Indefinido") : "Saldo da Conta / Dinheiro";
 
-    if (t.movementDirection === "OUTFLOW") {
-      totalOutflows += amount;
-      outflowByCategory.set(catName, (outflowByCategory.get(catName) ?? 0) + amount);
-      outflowByInstrument.set(instName, (outflowByInstrument.get(instName) ?? 0) + amount);
-    } else if (t.movementDirection === "INFLOW") {
-      totalInflows += amount;
-      inflowByCategory.set(catName, (inflowByCategory.get(catName) ?? 0) + amount);
-      inflowByInstrument.set(instName, (inflowByInstrument.get(instName) ?? 0) + amount);
+    // Se a transação for um PAGAMENTO NORMAL (Não é estorno)
+    if (t.movementType !== "REVERSAL") {
+      if (t.movementDirection === "OUTFLOW") { // Pagou uma conta (Despesa)
+        totalOutflows += amount;
+        outflowByCategory.set(catName, (outflowByCategory.get(catName) ?? 0) + amount);
+        outflowByInstrument.set(instName, (outflowByInstrument.get(instName) ?? 0) + amount);
+      } else if (t.movementDirection === "INFLOW") { // Recebeu um dinheiro (Receita)
+        totalInflows += amount;
+        inflowByCategory.set(catName, (inflowByCategory.get(catName) ?? 0) + amount);
+        inflowByInstrument.set(instName, (inflowByInstrument.get(instName) ?? 0) + amount);
+      }
+    } 
+    // Se a transação for um ESTORNO
+    else {
+      if (t.movementDirection === "INFLOW") { // Estornou uma Despesa (Devolveu dinheiro) -> Abate da Despesa
+        totalOutflows -= amount;
+        outflowByCategory.set(catName, (outflowByCategory.get(catName) ?? 0) - amount);
+        outflowByInstrument.set(instName, (outflowByInstrument.get(instName) ?? 0) - amount);
+      } else if (t.movementDirection === "OUTFLOW") { // Estornou uma Receita (Devolveu dinheiro) -> Abate da Receita
+        totalInflows -= amount;
+        inflowByCategory.set(catName, (inflowByCategory.get(catName) ?? 0) - amount);
+        inflowByInstrument.set(instName, (inflowByInstrument.get(instName) ?? 0) - amount);
+      }
     }
   });
 
@@ -98,7 +134,28 @@ function DashboardPage() {
 
   return (
     <div className="space-y-6 pb-12">
-      <PageHeader title="Olá! Aqui está o seu mês" description="Um resumo rápido de quanto você tem, quanto entra e quanto sai." action={<Link to="/faturas/nova" className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90">Nova fatura</Link>} />
+      <PageHeader 
+        title="Olá! Aqui está o seu mês" 
+        description="Um resumo rápido de quanto você tem, quanto entra e quanto sai." 
+        action={
+          <div className="flex gap-2">
+            <Button 
+              className="rounded-full bg-outflow hover:bg-outflow/90 text-white border-none shadow-sm" 
+              onClick={() => { setInvoiceDirection("PAYMENT"); setInvoiceModalOpen(true); }}
+            >
+              <ArrowDownRight className="mr-2 size-4" />
+              Saída
+            </Button>
+            <Button 
+              className="rounded-full bg-inflow hover:bg-inflow/90 text-white border-none shadow-sm" 
+              onClick={() => { setInvoiceDirection("RECEIPT"); setInvoiceModalOpen(true); }}
+            >
+              <ArrowUpRight className="mr-2 size-4" />
+              Entrada
+            </Button>
+          </div>
+        } 
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Saldo consolidado" value={formatMoney(totalBalance)} hint={`${accounts.data?.length ?? 0} contas cadastradas`} icon={<PiggyBank className="size-5" />} />
@@ -241,6 +298,13 @@ function DashboardPage() {
         onOpenChange={setPaymentModalOpen} 
         installment={selectedInstallmentToPay}
         onSuccess={() => setSelectedInstallmentToPay(null)} 
+      />
+
+      {/* 🌟 RENDERIZANDO O NOVO MODAL */}
+      <NewInvoiceDialog 
+        open={invoiceModalOpen} 
+        onOpenChange={setInvoiceModalOpen} 
+        defaultDirection={invoiceDirection} 
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calculator, CheckCircle2, AlertCircle, Search } from "lucide-react";
+import { Calculator, CheckCircle2, AlertCircle, Search, CreditCard, QrCode, Banknote, Barcode, Landmark } from "lucide-react";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -13,9 +13,11 @@ import { accountsQuery, operationTypesQuery, peopleQuery, paymentInstrumentsQuer
 import { api } from "@/lib/api/store";
 import type { InstallmentDTO, MovementType } from "@/lib/api/types";
 import { addMonths, formatMoney, todayIso } from "@/lib/format";
+import { PaymentTypeMeta } from "@/lib/constants";
 
 import { PersonDialog } from "./person-dialog";
 import { AccountDialog } from "./account-dialog";
+import { OperationTypeDialog } from "./operation-type-dialog";
 
 interface NewInvoiceDialogProps {
   open: boolean;
@@ -33,17 +35,18 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
 
   const [personModalOpen, setPersonModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [typeModalOpen, setTypeModalOpen] = useState(false);
 
-  // Estados de Busca (Para listas grandes)
   const [typeSearch, setTypeSearch] = useState("");
   const [personSearch, setPersonSearch] = useState("");
 
-  // Estados Gerais
   const [direction, setDirection] = useState<MovementType>(defaultDirection);
   const [operationTypeId, setOperationTypeId] = useState("");
   const [personId, setPersonId] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [quantity, setQuantity] = useState("1");
+  
+  const [purchaseDate, setPurchaseDate] = useState(todayIso());
   const [firstDueDate, setFirstDueDate] = useState(todayIso());
 
   const [globalAccountId, setGlobalAccountId] = useState("");
@@ -52,8 +55,10 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
   const [installments, setInstallments] = useState<any[]>([]);
 
   useEffect(() => {
-    setDirection(defaultDirection);
-  }, [defaultDirection]);
+    if (open) {
+      setDirection(defaultDirection);
+    }
+  }, [defaultDirection, open]);
 
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange(isOpen);
@@ -61,38 +66,35 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
       setOperationTypeId("");
       setPersonId("");
       setTotalAmount("");
+      // 🌟 Mantivemos o Reset Limpo
+      setQuantity("1");
       setInstallments([]);
       setGlobalAccountId("");
       setGlobalInstrumentId("");
       setTypeSearch("");
       setPersonSearch("");
+      setPurchaseDate(todayIso());
+      setFirstDueDate(todayIso());
     }
   };
 
-  // Dinâmica de Textos Baseada na Rota
   const isPayment = direction === "PAYMENT";
   const personLabel = isPayment ? "Fornecedor" : "Cliente";
   const colorClassText = isPayment ? "text-outflow" : "text-inflow";
 
-  // Listas Filtradas pela Busca
   const filteredTypes = useMemo(() => {
     return (types.data ?? [])
       .filter((t: any) => t.movementType === direction)
       .filter((t: any) => t.name.toLowerCase().includes(typeSearch.toLowerCase()));
   }, [types.data, direction, typeSearch]);
 
-  // 🌟 FILTRO DE PESSOAS ATIVADO (Role + Texto)
   const filteredPeople = useMemo(() => {
     return (people.data ?? [])
       .filter((p: any) => {
-        // 1. Filtro de Vínculo (Quem mandou a rota)
         const isRoleValid = isPayment 
           ? (p.role === "SUPPLIER" || p.role === "BOTH") 
           : (p.role === "CUSTOMER" || p.role === "BOTH");
-        
         if (!isRoleValid) return false;
-
-        // 2. Filtro de Texto (Busca)
         const searchName = p.nickname ?? p.name;
         return searchName.toLowerCase().includes(personSearch.toLowerCase());
       });
@@ -105,6 +107,11 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
     if (isGlobalWallet) return i.paymentType === "CASH";
     return i.paymentType !== "CASH";
   });
+
+  const isGlobalCreditCard = useMemo(() => {
+    const inst = (instruments.data ?? []).find((i: any) => i.id === globalInstrumentId);
+    return inst?.paymentType === "CREDIT_CARD";
+  }, [globalInstrumentId, instruments.data]);
 
   useEffect(() => {
     if (globalAccountId && globalInstrumentId) {
@@ -147,6 +154,7 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
         operationTypeId,
         personId,
         totalAmount: Number(totalAmount) || 0,
+        purchaseDate, 
         installments, 
       }),
     onSuccess: () => {
@@ -159,7 +167,29 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
 
   const currentSum = installments.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const isSumValid = Math.abs((Number(totalAmount) || 0) - currentSum) < 0.01;
-  const canSave = operationTypeId && personId && installments.length > 0 && isSumValid && installments.every(i => i.instrument && i.accountId && i.dueDate && i.amount > 0);
+  const canSave = operationTypeId && personId && purchaseDate && installments.length > 0 && isSumValid && installments.every(i => i.instrument && i.accountId && i.dueDate && i.amount > 0);
+
+  const renderInstrumentOption = (i: any) => {
+    const isCredit = i.paymentType === "CREDIT_CARD";
+    const name = i.cardHolderName || PaymentTypeMeta?.[i.paymentType] || i.paymentType;
+    return (
+      <div className="flex items-center gap-1.5 w-full">
+        {isCredit && <CreditCard className="size-3.5 text-primary shrink-0" />}
+        {i.paymentType === "PIX" && <QrCode className="size-3.5 text-muted-foreground shrink-0" />}
+        {i.paymentType === "CASH" && <Banknote className="size-3.5 text-muted-foreground shrink-0" />}
+        {i.paymentType === "BANK_SLIP" && <Barcode className="size-3.5 text-muted-foreground shrink-0" />}
+        {!["CREDIT_CARD", "PIX", "CASH", "BANK_SLIP"].includes(i.paymentType) && <Landmark className="size-3.5 text-muted-foreground shrink-0" />}
+        
+        <span className="truncate flex-1 text-left">{name}</span>
+        
+        {isCredit && (
+          <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase font-bold shrink-0">
+            Cartão
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -182,7 +212,13 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
               <div className="space-y-2 mt-2">
                 <div className="flex items-center justify-between">
                   <Label>Tipo de operação</Label>
-                  <Button type="button" variant="ghost" size="sm" className={`h-auto p-0 text-[10px] hover:bg-transparent ${colorClassText}`}>
+                  <Button 
+                    type="button" 
+                    variant="ghost" 
+                    size="sm" 
+                    className={`h-auto p-0 text-[10px] hover:bg-transparent ${colorClassText}`}
+                    onClick={() => setTypeModalOpen(true)}
+                  >
                     Nova Categoria
                   </Button>
                 </div>
@@ -267,9 +303,11 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                   <div className="space-y-2">
                     <Label className="text-xs">Instrumento Padrão</Label>
                     <Select value={globalInstrumentId} onValueChange={setGlobalInstrumentId} disabled={!globalAccountId}>
-                      <SelectTrigger><SelectValue placeholder={isGlobalWallet ? "Dinheiro Físico" : "PIX, Cartão..."} /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder={isGlobalWallet ? "Dinheiro Físico" : "Selecione..."} /></SelectTrigger>
                       <SelectContent>
-                        {validGlobalInstruments.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.cardHolderName || i.paymentType}</SelectItem>)}
+                        {validGlobalInstruments.map((i: any) => (
+                          <SelectItem key={i.id} value={i.id}>{renderInstrumentOption(i)}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -286,9 +324,17 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                   </div>
                 </div>
 
-                <div className="space-y-2 mt-3">
-                  <Label className="text-xs">Data do 1º Vencimento</Label>
-                  <Input type="date" value={firstDueDate} onChange={(e) => setFirstDueDate(e.target.value)} />
+                <div className="grid gap-3 sm:grid-cols-2 mt-3">
+                  <div className={`space-y-2 ${isGlobalCreditCard ? "sm:col-span-2" : ""}`}>
+                    <Label className="text-xs">Data da Compra/Emissão</Label>
+                    <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+                  </div>
+                  {!isGlobalCreditCard && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Data do 1º Vencimento</Label>
+                      <Input type="date" value={firstDueDate} onChange={(e) => setFirstDueDate(e.target.value)} />
+                    </div>
+                  )}
                 </div>
 
                 <Button variant="secondary" className="w-full rounded-full mt-5" onClick={handleGenerateInstallments} disabled={!totalAmount || !globalInstrumentId || !globalAccountId}>
@@ -326,14 +372,21 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                       return i.paymentType !== "CASH";
                     });
 
+                    const rowInstrument = (instruments.data ?? []).find((i: any) => i.id === p.instrument);
+                    const isRowCreditCard = rowInstrument?.paymentType === "CREDIT_CARD";
+
                     return (
                       <div key={p.parcelNumber} className="flex flex-col gap-2 rounded-xl bg-secondary/30 border p-3">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-sm w-6 text-center shrink-0">{p.parcelNumber}ª</span>
-                          <div className="flex-1 space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Vencimento</Label>
-                            <Input type="date" className="h-8 text-xs px-2" value={p.dueDate} onChange={(e) => updateInstallment(index, 'dueDate', e.target.value)} />
-                          </div>
+                          
+                          {!isRowCreditCard && (
+                            <div className="flex-1 space-y-1">
+                              <Label className="text-[10px] text-muted-foreground">Vencimento</Label>
+                              <Input type="date" className="h-8 text-xs px-2" value={p.dueDate} onChange={(e) => updateInstallment(index, 'dueDate', e.target.value)} />
+                            </div>
+                          )}
+
                           <div className="flex-1 space-y-1">
                             <Label className="text-[10px] text-muted-foreground">Valor (R$)</Label>
                             <Input type="number" step="0.01" className="h-8 text-xs px-2 font-semibold" value={p.amount} onChange={(e) => updateInstallment(index, 'amount', Number(e.target.value))} />
@@ -351,13 +404,15 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
                             </Select>
                           </div>
                           <div className="flex-1 space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Forma (PIX, Dinheiro)</Label>
+                            <Label className="text-[10px] text-muted-foreground">Forma de Pagto</Label>
                             <Select value={p.instrument} onValueChange={(val) => updateInstallment(index, 'instrument', val)} disabled={!p.accountId}>
                               <SelectTrigger className={`h-8 text-xs px-2 ${!p.instrument ? 'border-destructive' : 'bg-background'}`}>
                                 <SelectValue placeholder="Selecione" />
                               </SelectTrigger>
                               <SelectContent>
-                                {validRowInstruments.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.cardHolderName || i.paymentType}</SelectItem>)}
+                                {validRowInstruments.map((i: any) => (
+                                  <SelectItem key={i.id} value={i.id}>{renderInstrumentOption(i)}</SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                           </div>
@@ -387,7 +442,17 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
         direction={direction === "PAYMENT" ? "PAYMENT" : "RECEIPT"} 
         onSuccess={(newId) => setPersonId(newId)} 
       />
-      <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={(newId: string) => setGlobalAccountId(newId)} />
+      <AccountDialog 
+        open={accountModalOpen} 
+        onOpenChange={setAccountModalOpen} 
+        onSuccess={(newId: string) => setGlobalAccountId(newId)} 
+      />
+      <OperationTypeDialog
+        open={typeModalOpen}
+        onOpenChange={setTypeModalOpen}
+        defaultDirection={direction}
+        onSuccess={(newId: string) => setOperationTypeId(newId)}
+      />
     </>
   );
 }

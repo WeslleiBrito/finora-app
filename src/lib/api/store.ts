@@ -4,6 +4,7 @@ import type {
   BankResponseDTO,
   CardBrandResponseDTO,
   CreateInvoiceRequestDTO,
+  CreateManualAdjustmentTransactionRequestDTO,
   CreateTransactionDTO,
   CreditCardCreateRequestDTO,
   CreditCardDetailsDTO,
@@ -323,6 +324,16 @@ export const api = {
         body: JSON.stringify(body)
       }
     )
-  }
+  },
+
+  async createManualAdjustments(body: CreateManualAdjustmentTransactionRequestDTO) {
+    return fetchApi<any>(
+      `/transactions/adjustments`,
+      {
+        method: "POST",
+        body: JSON.stringify(body)
+      }
+    );
+  },
 };
 

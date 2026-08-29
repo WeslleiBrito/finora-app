@@ -1,8 +1,26 @@
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
 export function formatMoney(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
+/**
+ * Converte uma string "YYYY-MM-DD" para uma Data real do JavaScript no fuso local.
+ * Essencial para usar com funções do date-fns (isBefore, isAfter, etc) sem o bug de fuso horário.
+ */
+export function parseLocalDate(iso: string): Date {
+  if (!iso) return new Date();
+  
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  
+  // Usa fallback numérico seguro para evitar que o TS reclame de undefined
+  // Se 'm' for undefined, ele assume 1 (Janeiro), evitando o NaN no cálculo.
+  return new Date(y || new Date().getFullYear(), (m || 1) - 1, d || 1);
+}
+
 export function formatDate(iso: string): string {
+  if (!iso) return "-";
   const [y, m, d] = iso.slice(0, 10).split("-");
   return `${d}/${m}/${y}`;
 }

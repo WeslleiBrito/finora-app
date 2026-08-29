@@ -27,8 +27,6 @@ export const Route = createFileRoute("/_privado/cartoes")({
     meta: [
       { title: "Cartões de crédito — Poupi" },
       { name: "description", content: "Limite disponível, fechamento e vencimento de cada cartão." },
-      { property: "og:title", content: "Cartões de crédito — Poupi" },
-      { property: "og:description", content: "Limite disponível, fechamento e vencimento de cada cartão." },
     ],
   }),
   component: CardsPage,
@@ -47,6 +45,9 @@ function CardsPage() {
   const [dueDay, setDueDay] = useState("12");
   const [brandId, setBrandId] = useState("");
   const [bankId, setBankId] = useState("");
+  // 🌟 NOVOS ESTADOS: Juros e Multa
+  const [revolvingInterest, setRevolvingInterest] = useState("0");
+  const [fine, setFine] = useState("0");
 
   const create = useMutation({
     mutationFn: () =>
@@ -55,15 +56,30 @@ function CardsPage() {
         creditLimit: Number(limit) || 0,
         closingDay: Number(closingDay) || 1,
         dueDay: Number(dueDay) || 1,
-        cardBrand: brandId,
-        ...(bankId ? { bank: bankId } : {}),
+        cardBrandId: brandId,
+        revolvingInterest: Number(revolvingInterest) || 0,
+        fine: Number(fine) || 0,
+        // 🌟 CORREÇÃO AQUI: Se tiver bankId, injeta a propriedade. Se não, ignora.
+        ...(bankId ? { bankId } : {}),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
       toast.success("Cartão cadastrado");
       setOpen(false);
+      
+      // Reseta os estados após o sucesso
       setName("");
+      setLimit("1000");
+      setClosingDay("5");
+      setDueDay("12");
+      setBrandId("");
+      setBankId("");
+      setRevolvingInterest("0");
+      setFine("0");
     },
+    onError: (err: any) => {
+      toast.error(err.message || "Erro ao cadastrar cartão");
+    }
   });
 
   const toggle = useMutation({
@@ -84,15 +100,16 @@ function CardsPage() {
             <DialogTrigger asChild>
               <Button className="rounded-full">Novo cartão</Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
                 <DialogTitle>Novo cartão de crédito</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="card-name">Nome do cartão</Label>
+                  <Label htmlFor="card-name">Nome do cartão (Apelido)</Label>
                   <Input id="card-name" value={name} onChange={(e) => setName(e.target.value)} />
                 </div>
+                
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Bandeira</Label>
@@ -101,7 +118,7 @@ function CardsPage() {
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        {(brands.data ?? []).map((b) => (
+                        {(brands.data ?? []).map((b: any) => (
                           <SelectItem key={b.id} value={b.id}>
                             {b.name}
                           </SelectItem>
@@ -116,7 +133,7 @@ function CardsPage() {
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        {(banks.data ?? []).map((b) => (
+                        {(banks.data ?? []).map((b: any) => (
                           <SelectItem key={b.id} value={b.id}>
                             {b.name}
                           </SelectItem>
@@ -125,35 +142,35 @@ function CardsPage() {
                     </Select>
                   </div>
                 </div>
+
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-2">
-                    <Label htmlFor="card-limit">Limite</Label>
+                    <Label htmlFor="card-limit">Limite (R$)</Label>
                     <Input id="card-limit" type="number" value={limit} onChange={(e) => setLimit(e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="card-close">Fechamento</Label>
-                    <Input
-                      id="card-close"
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={closingDay}
-                      onChange={(e) => setClosingDay(e.target.value)}
-                    />
+                    <Input id="card-close" type="number" min={1} max={31} value={closingDay} onChange={(e) => setClosingDay(e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="card-due">Vencimento</Label>
-                    <Input
-                      id="card-due"
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={dueDay}
-                      onChange={(e) => setDueDay(e.target.value)}
-                    />
+                    <Input id="card-due" type="number" min={1} max={31} value={dueDay} onChange={(e) => setDueDay(e.target.value)} />
+                  </div>
+                </div>
+
+                {/* 🌟 NOVOS CAMPOS NO FORMULÁRIO */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="card-revolving">Juros Rotativo (%)</Label>
+                    <Input id="card-revolving" type="number" step="0.01" value={revolvingInterest} onChange={(e) => setRevolvingInterest(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="card-fine">Multa (%)</Label>
+                    <Input id="card-fine" type="number" step="0.01" value={fine} onChange={(e) => setFine(e.target.value)} />
                   </div>
                 </div>
               </div>
+              
               <DialogFooter>
                 <Button
                   className="rounded-full"
@@ -169,9 +186,10 @@ function CardsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {(cards.data ?? []).map((card) => {
+        {(cards.data ?? []).map((card: any) => {
           const used = card.creditLimit - card.availableLimit;
           const pct = card.creditLimit ? Math.round((used / card.creditLimit) * 100) : 0;
+          
           return (
             <article key={card.id} className="rounded-2xl border bg-card p-5 shadow-sm">
               <div className="flex items-start justify-between">
@@ -182,7 +200,7 @@ function CardsPage() {
               </div>
               <h2 className="mt-4 text-base font-bold">{card.cardHolderName}</h2>
               <p className="text-xs text-muted-foreground">
-                {card.cardBrand.name}
+                {card.cardBrand?.name}
                 {card.bank ? ` · ${card.bank.name}` : ""}
               </p>
 
@@ -198,7 +216,8 @@ function CardsPage() {
               <dl className="mt-4 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <dt>Fecha dia</dt>
-                  <dd className="font-semibold text-foreground">{card.closeDay}</dd>
+                  {/* 🌟 CORRIGIDO PARA closingDay */}
+                  <dd className="font-semibold text-foreground">{card.closingDay}</dd>
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <dt>Vence dia</dt>
@@ -206,11 +225,13 @@ function CardsPage() {
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <dt>Juros rotativo</dt>
-                  <dd className="font-semibold text-foreground">{card.revolvingInterest}%</dd>
+                  {/* 🌟 RENDERIZANDO CORRETAMENTE */}
+                  <dd className="font-semibold text-foreground">{card.revolvingInterest || 0}%</dd>
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <dt>Multa</dt>
-                  <dd className="font-semibold text-foreground">{card.fine}%</dd>
+                  {/* 🌟 RENDERIZANDO CORRETAMENTE */}
+                  <dd className="font-semibold text-foreground">{card.fine || 0}%</dd>
                 </div>
               </dl>
 

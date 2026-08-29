@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, AlertTriangle, Plus, Calculator, History, RotateCcw } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Plus, Calculator, History, RotateCcw, CreditCard, QrCode, Banknote, Barcode, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
@@ -10,10 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { accountsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
 
 import { api } from "@/lib/api/store";
 import { formatMoney, todayIso } from "@/lib/format";
+import { PaymentTypeMeta } from "@/lib/constants";
 import { AccountDialog } from "./account-dialog";
 import { TransactionReversalDialog } from "./transaction-reversal-dialog";
 
@@ -33,7 +35,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
 
-  // Estados
   const [reversalModalOpen, setReversalModalOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [instrumentId, setInstrumentId] = useState("");
@@ -44,7 +45,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
   const [fine, setFine] = useState<number | "">(0);
   const [discount, setDiscount] = useState<number | "">(0);
 
-  // Injeção dos dados autônomos da parcela
   useMemo(() => {
     if (open && installment) {
       setAmount(installment.remainingBalance);
@@ -57,7 +57,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
     }
   }, [open, installment]);
   
-  // Cálculos Efetivos
   const numAmount = Number(amount) || 0;
   const numInterest = Number(interest) || 0;
   const numFine = Number(fine) || 0;
@@ -66,20 +65,12 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
   const effectiveAmount = numAmount + numInterest + numFine - numDiscount;
   const newInstallmentBalance = Math.max(0, installment?.remainingBalance - numAmount);
 
-  // ==========================================
-  // REGRAS DE DOMÍNIO (KIND, SALDO E INSTRUMENTOS)
-  // ==========================================
   const selectedAccount = (accounts.data ?? []).find((a: any) => a.id === accountId);
   const isWallet = selectedAccount?.type === "WALLET"; 
   const hasInsufficientWalletFunds = isWallet && effectiveAmount > (selectedAccount?.balance || 0);
 
-  // Filtro Inteligente: Carteira só aceita CASH. Bancos não aceitam CASH.
   const validInstruments = (instruments.data ?? []).filter((i: any) => {
-    
-    // 🌟 NOVA REGRA: Só exibe instrumentos que servem para pagar!
     if (i.instrumentNature !== "PAYMENT") return false;
-
-    // Regra da Carteira
     if (isWallet) return i.paymentType === "CASH";
     return i.paymentType !== "CASH";
   });
@@ -110,6 +101,29 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
     onError: (err: any) => toast.error(err.message),
   });
 
+  // 🌟 FUNÇÃO AUXILIAR DE RENDERIZAÇÃO DO INSTRUMENTO (Igual ao Modal de Nova Fatura)
+  const renderInstrumentOption = (i: any) => {
+    const isCredit = i.paymentType === "CREDIT_CARD";
+    const name = i.cardHolderName || PaymentTypeMeta?.[i.paymentType] || i.paymentType;
+    return (
+      <div className="flex items-center gap-1.5 w-full">
+        {isCredit && <CreditCard className="size-3.5 text-primary shrink-0" />}
+        {i.paymentType === "PIX" && <QrCode className="size-3.5 text-muted-foreground shrink-0" />}
+        {i.paymentType === "CASH" && <Banknote className="size-3.5 text-muted-foreground shrink-0" />}
+        {i.paymentType === "BANK_SLIP" && <Barcode className="size-3.5 text-muted-foreground shrink-0" />}
+        {!["CREDIT_CARD", "PIX", "CASH", "BANK_SLIP"].includes(i.paymentType) && <Landmark className="size-3.5 text-muted-foreground shrink-0" />}
+        
+        <span className="truncate flex-1 text-left">{name}</span>
+        
+        {isCredit && (
+          <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase font-bold shrink-0">
+            Cartão
+          </span>
+        )}
+      </div>
+    );
+  };
+
   if (!installment) return null;
 
   const canSave = accountId && numAmount > 0 && !hasInsufficientWalletFunds;
@@ -118,10 +132,8 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        {/* 🌟 MODAL ALARGADO: sm:max-w-4xl */}
         <DialogContent className="sm:max-w-4xl p-0 overflow-hidden max-h-[90vh] flex flex-col">
           
-          {/* CABEÇALHO */}
           <div className="bg-muted/30 p-6 border-b shrink-0">
             <DialogTitle className="text-xl mb-4">Liquidação de Parcela</DialogTitle>
             <div className="flex items-center justify-between text-sm">
@@ -140,10 +152,7 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
             </div>
           </div>
 
-          {/* ÁREA DE SCROLL */}
           <div className="flex-1 overflow-y-auto">
-            
-            {/* FORMULÁRIO DE BAIXA */}
             <div className="grid md:grid-cols-2 gap-6 p-6">
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -180,7 +189,12 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
                   <Select value={instrumentId} onValueChange={setInstrumentId} disabled={!accountId}>
                     <SelectTrigger><SelectValue placeholder={isWallet ? "Dinheiro (Físico)" : "PIX, Cartão..."} /></SelectTrigger>
                     <SelectContent>
-                      {validInstruments.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.cardHolderName || i.paymentType}</SelectItem>)}
+                      {/* 🌟 AQUI USAMOS A FUNÇÃO DE RENDERIZAÇÃO NOVA */}
+                      {validInstruments.map((i: any) => (
+                        <SelectItem key={i.id} value={i.id}>
+                          {renderInstrumentOption(i)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -216,7 +230,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
               </div>
             </div>
 
-            {/* 🌟 HISTÓRICO DE TRANSAÇÕES DA PARCELA */}
             {transactions.length > 0 && (
               <div className="px-6 py-6 border-t bg-muted/10">
                 <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1">
@@ -227,7 +240,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
                     <TableHeader>
                       <TableRow>
                         <TableHead className="text-xs h-8">Data</TableHead>
-                        {/* 🌟 NOVAS COLUNAS */}
                         <TableHead className="text-xs h-8">Conta</TableHead>
                         <TableHead className="text-xs h-8">Forma</TableHead>
                         <TableHead className="text-xs h-8">Operação</TableHead>
@@ -240,20 +252,38 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
                         const isAlreadyReversed = transactions.some((rev: any) => rev.reversedTransactionId === t.id);
                         const canReverse = t.movementType !== 'REVERSAL' && !isAlreadyReversed;
 
-                        // 🌟 CRUZAMENTO DE DADOS: Pegando o nome da conta e do instrumento
                         const rowAccount = (accounts.data ?? []).find((a: any) => a.id === t.accountId);
                         const rowInstrument = (instruments.data ?? []).find((i: any) => i.id === t.paymentInstrumentId);
+                        
+                        const isCredit = rowInstrument?.paymentType === "CREDIT_CARD";
 
                         return (
                           <TableRow key={t.id}>
                             <TableCell className="text-xs py-2 whitespace-nowrap">{format(parseISO(t.paymentDate), 'dd/MM/yyyy')}</TableCell>
                             
-                            {/* 🌟 RENDERIZANDO CONTA E FORMA */}
                             <TableCell className="text-xs py-2 max-w-[140px] truncate" title={rowAccount?.name}>
                               {rowAccount?.name || "Desconhecida"}
                             </TableCell>
-                            <TableCell className="text-xs py-2 max-w-[120px] truncate">
-                              {rowInstrument ? (rowInstrument.cardHolderName || rowInstrument.paymentType) : "-"}
+                            <TableCell className="text-xs py-2 min-w-[120px]">
+                              {/* 🌟 RENDERIZANDO A BADGE ESTILIZADA NO HISTÓRICO DA TABELA */}
+                              {rowInstrument ? (
+                                <Badge 
+                                  variant={isCredit ? "default" : "secondary"} 
+                                  className={`text-[10px] font-medium flex items-center w-fit gap-1.5 px-2 py-0.5 ${
+                                    isCredit ? 'bg-primary/10 text-primary border-none' : 'bg-secondary/50 text-muted-foreground border-transparent'
+                                  }`}
+                                >
+                                  {rowInstrument.paymentType === "CREDIT_CARD" && <CreditCard className="size-3" />}
+                                  {rowInstrument.paymentType === "PIX" && <QrCode className="size-3" />}
+                                  {rowInstrument.paymentType === "CASH" && <Banknote className="size-3" />}
+                                  {rowInstrument.paymentType === "BANK_SLIP" && <Barcode className="size-3" />}
+                                  {!["CREDIT_CARD", "PIX", "CASH", "BANK_SLIP"].includes(rowInstrument.paymentType) && <Landmark className="size-3" />}
+                                  
+                                  <span className="truncate max-w-[120px]">{rowInstrument.cardHolderName || PaymentTypeMeta?.[rowInstrument.paymentType] || rowInstrument.paymentType}</span>
+                                </Badge>
+                              ) : (
+                                "-"
+                              )}
                             </TableCell>
 
                             <TableCell className="text-xs py-2">
@@ -290,7 +320,6 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
             
           </div>
 
-          {/* RODAPÉ FIXO */}
           <div className="bg-muted/50 p-6 border-t flex items-center justify-between shrink-0">
             <div className="flex gap-6 w-full text-sm">
               <div>
@@ -321,14 +350,13 @@ export function PaymentDialog({ open, onOpenChange, installment, onSuccess }: Pa
       </Dialog>
       <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={(newId: string) => setAccountId(newId)} />
       
-      {/* 🌟 A MÁGICA DA UX: O onSuccess do ReversalDialog fecha o modal pai! */}
       <TransactionReversalDialog 
         open={reversalModalOpen} 
         onOpenChange={setReversalModalOpen} 
         transaction={selectedTransaction}
         onSuccess={() => {
-           setReversalModalOpen(false); // Fecha o modal de estorno
-           onOpenChange(false); // Fecha o modal de pagamento (Pai) para forçar o clique novamente na tabela atualizada
+           setReversalModalOpen(false); 
+           onOpenChange(false); 
         }}
       />
     </>

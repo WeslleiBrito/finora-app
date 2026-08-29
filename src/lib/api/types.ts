@@ -76,6 +76,7 @@ export interface AccountResponseDTO {
   id: UUID;
   name: string;
   type: AccountKind;
+  initialValue: number;
   balance: number;
   bank?: BankResponseDTO;
   agency?: string;
@@ -93,7 +94,7 @@ export interface CreditCardDetailsDTO {
   instrumentNature: instrumentNature;
   expirationDate?: string;
   cardHolderName: string;
-  closeDay: number;
+  closingDay: number;
   dueDay: number;
   creditLimit: number;
   availableLimit: number;
@@ -179,6 +180,7 @@ export interface CreateInvoiceRequestDTO {
   operationTypeId: UUID;
   totalAmount: number;
   personId: UUID;
+  purchaseDate: string;
   installments: InstallmentDTO[];
 }
 
@@ -207,8 +209,8 @@ export interface CreditCardCreateRequestDTO {
   creditLimit: number;
   closingDay: number;
   dueDay: number;
-  cardBrand: UUID;
-  bank?: UUID;
+  cardBrandId: UUID;
+  bankId?: UUID;
   revolvingInterest?: number;
   fine?: number;
   expirationDate?: string;
@@ -291,3 +293,16 @@ export const PaymentTypeMeta: Record<string, string> = {
   BOLETO: "Boleto Bancário",
   TICKET: "Vale / Ticket"
 };
+
+export interface CreateManualAdjustmentTransactionDTO {
+  amount: number;
+  direction: "INFLOW" | "OUTFLOW";
+  paymentDate: string;
+  reason: string;
+  accountId: string;
+  paymentInstrumentId?: string | null;
+}
+
+export interface CreateManualAdjustmentTransactionRequestDTO {
+  dto: CreateManualAdjustmentTransactionDTO[];
+}

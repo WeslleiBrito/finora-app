@@ -103,6 +103,7 @@ export interface CreditCardDetailsDTO {
   status: PaymentInstrumentStatus;
   cardBrand: CardBrandResponseDTO;
   bank?: BankResponseDTO;
+  installments: InstallmentResponseDTO[]
 }
 
 export interface InstallmentResponseDTO {

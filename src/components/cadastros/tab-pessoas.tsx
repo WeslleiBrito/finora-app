@@ -23,7 +23,6 @@ export function TabPessoas() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [kind, setKind] = useState<"INDIVIDUAL" | "LEGAL_ENTITY">("INDIVIDUAL");
-  // 🌟 NOVO: Estado para gerenciar o vínculo da pessoa
   const [role, setRole] = useState<"SUPPLIER" | "CUSTOMER" | "BOTH">("BOTH");
 
   const [name, setName] = useState("");
@@ -36,7 +35,7 @@ export function TabPessoas() {
   const resetForm = () => {
     setSelectedId(null);
     setName(""); setDocument(""); setNickname(""); setKind("INDIVIDUAL");
-    setRole("BOTH"); // 🌟 Reseta pro default
+    setRole("BOTH");
     setEmails([{ email: "" }]);
     setPhones([{ number: "", type: "MOBILE" }]);
     setAddresses([{ street: "", number: "", neighborhood: "", complement: "", city: "", state: "", zipCode: "" }]);
@@ -46,7 +45,6 @@ export function TabPessoas() {
     const p = item.raw;
     setSelectedId(p.id);
     setKind(p.personType || "INDIVIDUAL");
-    // 🌟 Carrega o vínculo salvo no banco
     setRole(p.role || "BOTH");
     setName(p.name || "");
     setDocument(p.cpf || p.cnpj || "");
@@ -59,9 +57,18 @@ export function TabPessoas() {
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const validEmails = emails.filter((e) => e.email.trim() !== "");
-      const validPhones = phones.filter((p) => p.number.trim() !== "");
-      const validAddresses = addresses.filter((a) => a.street.trim() !== "" && a.zipCode.trim() !== "");
+      // 🌟 Remove o ID dos contatos para forçar a substituição completa (Full Replacement) no Back-end
+      const validEmails = emails
+        .filter((e) => e.email.trim() !== "")
+        .map(({ id, ...rest }: any) => rest);
+
+      const validPhones = phones
+        .filter((p) => p.number.trim() !== "")
+        .map(({ id, ...rest }: any) => rest);
+
+      const validAddresses = addresses
+        .filter((a) => a.street.trim() !== "" && a.zipCode.trim() !== "")
+        .map(({ id, ...rest }: any) => rest);
 
       const payload = { 
         name, 
@@ -77,7 +84,16 @@ export function TabPessoas() {
         ? { ...payload, CNPJ: document, tradeName: nickname, personType: "LEGAL_ENTITY" } 
         : { ...payload, CPF: document, personType: "INDIVIDUAL" };
 
-      return selectedId ? api.updatePerson(selectedId, finalPayload) : api.createPerson(finalPayload);
+      // 🌟 Direciona para as rotas corretas (Criar ou Atualizar / Física ou Jurídica)
+      if (selectedId) {
+          return isLegal 
+            ? api.updateLegalPerson(selectedId, finalPayload) 
+            : api.updatePhysicalPerson(selectedId, finalPayload);
+      } else {
+          return isLegal
+            ? api.createLegalPerson(finalPayload)
+            : api.createPhysicalPerson(finalPayload);
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["people"] });
@@ -87,7 +103,6 @@ export function TabPessoas() {
     onError: (err: any) => toast.error(err.message),
   });
 
-  // Função auxiliar para traduzir o Enum na lista
   const translateRole = (r: string) => {
     if (r === "SUPPLIER") return "Fornecedor";
     if (r === "CUSTOMER") return "Cliente";
@@ -103,17 +118,13 @@ export function TabPessoas() {
       </div>
 
       <InteractiveList
-        items={(people.data ?? []).map((p) => {
-          // 🌟 1. Tenta formatar o documento, se existir
+        items={(people.data ?? []).map((p: any) => {
           const doc = p.cpf ? formatDocument(p.cpf) : (p.cnpj ? formatDocument(p.cnpj) : null);
-          
-          // 🌟 2. Só cria o separador " — 000.000.000-00" se o 'doc' tiver valor
           const docDisplay = doc ? ` — ${doc}` : "";
 
           return {
             id: p.id,
             title: p.name,
-            // 🌟 3. Monta o subtítulo dinamicamente e sem espaços/traços vazios
             subtitle: `${p.personType === "INDIVIDUAL" ? "Pessoa física" : "Pessoa jurídica"}${docDisplay} · ${translateRole(p.role)}`,
             active: true,
             raw: { ...p, category: "pessoas" },
@@ -144,7 +155,6 @@ export function TabPessoas() {
                 </Select>
               </div>
 
-              {/* 🌟 NOVA CAIXA DE SELEÇÃO: VÍNCULO */}
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   <Briefcase className="size-3 text-muted-foreground" /> Vínculo
@@ -164,7 +174,7 @@ export function TabPessoas() {
                 <Input value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label>{kind === "INDIVIDUAL" ? "CPF" : "CNPJ"}</Label>
+                <Label>{kind === "INDIVIDUAL" ? "CPF" : "CNPJ"} (Opcional)</Label>
                 <Input value={document} onChange={(e) => setDocument(formatDocument(e.target.value) || "")} maxLength={18} />
               </div>
               <div className="space-y-2">
@@ -174,7 +184,6 @@ export function TabPessoas() {
             </div>
 
             <div className="grid gap-6 border-t pt-4 lg:grid-cols-2">
-              {/* E-mails */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-sm">E-mails</h3>
@@ -188,7 +197,6 @@ export function TabPessoas() {
                 ))}
               </div>
 
-              {/* Telefones */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-sm">Telefones</h3>
@@ -211,7 +219,6 @@ export function TabPessoas() {
               </div>
             </div>
 
-            {/* Endereços */}
             <div className="space-y-4 border-t pt-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-sm">Endereços</h3>
@@ -236,7 +243,8 @@ export function TabPessoas() {
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpenModal(false)} className="rounded-full">Cancelar</Button>
-            <Button disabled={!name || !document || saveMutation.isPending} onClick={() => saveMutation.mutate()} className="rounded-full bg-primary text-primary-foreground">
+            {/* 🌟 Removido o bloqueio (!document) e agora avalia apenas o preenchimento do Nome */}
+            <Button disabled={!name || saveMutation.isPending} onClick={() => saveMutation.mutate()} className="rounded-full bg-primary text-primary-foreground">
               {saveMutation.isPending ? "Salvando..." : "Salvar no Banco"}
             </Button>
           </DialogFooter>

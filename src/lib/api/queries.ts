@@ -8,6 +8,15 @@ export const transactionsQuery = queryOptions({
   queryKey: ["transactions"],
   queryFn: () => api.listTransactions(),
 });
+
+export const dashboardSummaryQuery = queryOptions({
+  queryKey: ["dashboard-summary"],
+  queryFn: () => api.getDashboardSummary(),
+});
+export const creditCardSummaryQuery = queryOptions({
+  queryKey: ["credit-card-summary"],
+  queryFn: () => api.getCreditCardSummary(),
+});
 export const peopleQuery = queryOptions({ queryKey: ["people"], queryFn: () => api.listPeople() });
 export const banksQuery = queryOptions({ queryKey: ["banks"], queryFn: () => api.listBanks() });
 export const cardBrandsQuery = queryOptions({ queryKey: ["card-brands"], queryFn: () => api.listCardBrands() });
@@ -30,4 +39,10 @@ export const financeKeys = [
 export const paymentInstrumentsQuery = queryOptions({
   queryKey: ["payment-instruments"],
   queryFn: () => api.listPaymentInstruments(),
+});
+
+export const investmentDashboardsQuery = (accountId: string) => queryOptions({
+  queryKey: ["investments", accountId],
+  queryFn: () => api.getInvestmentDashboards(accountId),
+  enabled: !!accountId && accountId !== "ALL"
 });

@@ -17,6 +17,7 @@ import { Route as PrivadoCadastrosRouteImport } from './routes/_privado.cadastro
 import { Route as PrivadoCartoesRouteImport } from './routes/_privado.cartoes'
 import { Route as PrivadoContasRouteImport } from './routes/_privado.contas'
 import { Route as PrivadoDashboardRouteImport } from './routes/_privado.dashboard'
+import { Route as PrivadoInvestimentosRouteImport } from './routes/_privado.investimentos'
 import { Route as PrivadoPagarRouteImport } from './routes/_privado.pagar'
 import { Route as PrivadoPerfilRouteImport } from './routes/_privado.perfil'
 import { Route as PrivadoPessoasRouteImport } from './routes/_privado.pessoas'
@@ -63,6 +64,11 @@ const PrivadoContasRoute = PrivadoContasRouteImport.update({
 const PrivadoDashboardRoute = PrivadoDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => PrivadoRoute,
+} as any)
+const PrivadoInvestimentosRoute = PrivadoInvestimentosRouteImport.update({
+  id: '/investimentos',
+  path: '/investimentos',
   getParentRoute: () => PrivadoRoute,
 } as any)
 const PrivadoPagarRoute = PrivadoPagarRouteImport.update({
@@ -114,6 +120,7 @@ export interface FileRoutesByFullPath {
   '/cartoes': typeof PrivadoCartoesRoute
   '/contas': typeof PrivadoContasRoute
   '/dashboard': typeof PrivadoDashboardRoute
+  '/investimentos': typeof PrivadoInvestimentosRoute
   '/pagar': typeof PrivadoPagarRoute
   '/perfil': typeof PrivadoPerfilRoute
   '/pessoas': typeof PrivadoPessoasRoute
@@ -131,6 +138,7 @@ export interface FileRoutesByTo {
   '/cartoes': typeof PrivadoCartoesRoute
   '/contas': typeof PrivadoContasRoute
   '/dashboard': typeof PrivadoDashboardRoute
+  '/investimentos': typeof PrivadoInvestimentosRoute
   '/pagar': typeof PrivadoPagarRoute
   '/perfil': typeof PrivadoPerfilRoute
   '/pessoas': typeof PrivadoPessoasRoute
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   '/_privado/cartoes': typeof PrivadoCartoesRoute
   '/_privado/contas': typeof PrivadoContasRoute
   '/_privado/dashboard': typeof PrivadoDashboardRoute
+  '/_privado/investimentos': typeof PrivadoInvestimentosRoute
   '/_privado/pagar': typeof PrivadoPagarRoute
   '/_privado/perfil': typeof PrivadoPerfilRoute
   '/_privado/pessoas': typeof PrivadoPessoasRoute
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/cartoes'
     | '/contas'
     | '/dashboard'
+    | '/investimentos'
     | '/pagar'
     | '/perfil'
     | '/pessoas'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/cartoes'
     | '/contas'
     | '/dashboard'
+    | '/investimentos'
     | '/pagar'
     | '/perfil'
     | '/pessoas'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '/_privado/cartoes'
     | '/_privado/contas'
     | '/_privado/dashboard'
+    | '/_privado/investimentos'
     | '/_privado/pagar'
     | '/_privado/perfil'
     | '/_privado/pessoas'
@@ -279,6 +291,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrivadoDashboardRouteImport
       parentRoute: typeof PrivadoRoute
     }
+    '/_privado/investimentos': {
+      id: '/_privado/investimentos'
+      path: '/investimentos'
+      fullPath: '/investimentos'
+      preLoaderRoute: typeof PrivadoInvestimentosRouteImport
+      parentRoute: typeof PrivadoRoute
+    }
     '/_privado/pagar': {
       id: '/_privado/pagar'
       path: '/pagar'
@@ -343,6 +362,7 @@ interface PrivadoRouteChildren {
   PrivadoCartoesRoute: typeof PrivadoCartoesRoute
   PrivadoContasRoute: typeof PrivadoContasRoute
   PrivadoDashboardRoute: typeof PrivadoDashboardRoute
+  PrivadoInvestimentosRoute: typeof PrivadoInvestimentosRoute
   PrivadoPagarRoute: typeof PrivadoPagarRoute
   PrivadoPerfilRoute: typeof PrivadoPerfilRoute
   PrivadoPessoasRoute: typeof PrivadoPessoasRoute
@@ -358,6 +378,7 @@ const PrivadoRouteChildren: PrivadoRouteChildren = {
   PrivadoCartoesRoute: PrivadoCartoesRoute,
   PrivadoContasRoute: PrivadoContasRoute,
   PrivadoDashboardRoute: PrivadoDashboardRoute,
+  PrivadoInvestimentosRoute: PrivadoInvestimentosRoute,
   PrivadoPagarRoute: PrivadoPagarRoute,
   PrivadoPerfilRoute: PrivadoPerfilRoute,
   PrivadoPessoasRoute: PrivadoPessoasRoute,

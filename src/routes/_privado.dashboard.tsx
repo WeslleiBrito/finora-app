@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,8 @@ import { PageHeader } from "@/components/app/page-header";
 import { SummaryCard } from "@/components/app/summary-card";
 import { InstallmentStatusBadge } from "@/components/app/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { accountsQuery, invoicesQuery, operationTypesQuery, transactionsQuery, paymentInstrumentsQuery } from "@/lib/api/queries";
-import { daysUntil, formatDate, formatMoney } from "@/lib/format";
+import { dashboardSummaryQuery, invoicesQuery, operationTypesQuery, accountsQuery, investmentDashboardsQuery } from "@/lib/api/queries";
+import { formatDate, formatMoney } from "@/lib/format";
 import { PaymentDialog } from "@/components/modals/payment-dialog";
 import { NewInvoiceDialog } from "@/components/modals/new-invoice-dialog";
 import { 
@@ -18,17 +18,15 @@ import {
   PiggyBank, 
   CalendarClock, 
   LayoutList, 
-  CreditCard
+  CreditCard,
+  Landmark
 } from "lucide-react";
-
-// Importando o dicionário inteligente criado acima
-import { PaymentTypeMeta } from "@/lib/constants";
 
 export const Route = createFileRoute("/_privado/dashboard")({
   head: () => ({
     meta: [
       { title: "Resumo financeiro — Poupi" },
-      { name: "description", content: "Saldo consolidado, parcelas a vencer e movimentações recentes." },
+      { name: "description", content: "Patrimônio, saldo consolidado, parcelas a vencer e movimentações recentes." },
     ],
   }),
   component: DashboardPage,
@@ -39,22 +37,36 @@ function DashboardPage() {
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedInstallmentToPay, setSelectedInstallmentToPay] = useState<any>(null);
 
-  // 🌟 ESTADOS DO NOVO MODAL DE LANÇAMENTO
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoiceDirection, setInvoiceDirection] = useState<"PAYMENT" | "RECEIPT">("PAYMENT");
 
-  const accounts = useQuery(accountsQuery);
+  const { data: summary, isLoading } = useQuery(dashboardSummaryQuery);
   const invoices = useQuery(invoicesQuery);
-  const transactions = useQuery(transactionsQuery);
   const operationTypes = useQuery(operationTypesQuery);
-  const instruments = useQuery(paymentInstrumentsQuery);
-
-  const totalBalance = (accounts.data ?? []).filter((a) => a.status === "ACTIVE").reduce((sum, a) => sum + a.balance, 0);
-  const typeById = new Map((operationTypes.data ?? []).map((t) => [t.id, t]));
+  const accountsRes = useQuery(accountsQuery);
   
-  // 🌟 HUMANIZANDO O INSTRUMENTO PARA O RAIO-X
-  const instrumentById = new Map((instruments.data ?? []).map((i) => [i.id, i.cardHolderName || PaymentTypeMeta[i.paymentType] || i.paymentType]));
+  const accounts = accountsRes.data ?? [];
 
+  // Busca em paralelo o dashboard de investimentos de todas as contas
+  const investmentQueries = useQueries({
+    queries: accounts.filter((a: any) => a.type !== "WALLET").map((acc: any) => ({
+      ...investmentDashboardsQuery(acc.id),
+      enabled: !!acc.id,
+    }))
+  });
+
+  // CORREÇÃO 1: Usando o nome correto do DTO (totalProjectedNetBalance) e garantindo fallback Numérico
+  const totalInvestments = investmentQueries.reduce((acc, query) => {
+    const dbs = (query.data as any[]) ?? [];
+    return acc + dbs.reduce((sum, inv) => sum + Number(inv.totalProjectedNetBalance || 0), 0);
+  }, 0);
+
+  // CORREÇÃO 2: Garantindo que o saldo das contas seja tratado como Número estrito
+  const saldoContas = Number(summary?.totalBalance || 0);
+  const patrimonioTotal = saldoContas + totalInvestments;
+
+  const typeById = new Map((operationTypes.data || []).map((t) => [t.id, t]));
+  
   const openInstallments = (invoices.data ?? [])
     .filter((i) => i.status !== "CANCELLED")
     .flatMap((invoice) =>
@@ -64,73 +76,21 @@ function DashboardPage() {
     )
     .sort((a, b) => a.installment.dueDate.localeCompare(b.installment.dueDate));
 
-  const toReceive = openInstallments.filter((i) => i.type?.movementType === "RECEIPT").reduce((sum, i) => sum + (i.installment.amount - i.installment.totalPaid), 0);
-  const toPay = openInstallments.filter((i) => i.type?.movementType === "PAYMENT").reduce((sum, i) => sum + (i.installment.amount - i.installment.totalPaid), 0);
-  const dueSoon = openInstallments.filter((i) => daysUntil(i.installment.dueDate) <= 15);
-  
-  // 🌟 Agora o gráfico de barras também ignora as transações estornadas/canceladas
-  const chartData = buildMonthlyChart((transactions.data)?.filter((i) => (i.movementType === "RECEIPT" || i.movementType === "PAYMENT") && !i.reversed) ?? []);
-  
-  const currentMonthPrefix = new Date().toISOString().slice(0, 7); 
-  const opTypeByInstallmentId = new Map<string, string>();
-  
-  (invoices.data ?? []).forEach(inv => {
-    const typeName = typeById.get(inv.operationTypeId)?.name ?? "Outros";
-    inv.installments.forEach(inst => opTypeByInstallmentId.set(inst.id, typeName));
-  });
+  const outflowCatData = summary?.outflowByCategory || [];
+  const outflowInstData = summary?.outflowByInstrument || [];
+  const inflowCatData = summary?.inflowByCategory || [];
+  const inflowInstData = summary?.inflowByInstrument || [];
 
-  // 🌟 Agora ignoramos os estornos, pois a transação original já é cortada pelo !t.reversed
-  const thisMonthTransactions = (transactions.data ?? []).filter(t => 
-    t.paymentDate.startsWith(currentMonthPrefix) && 
-    !t.reversed && 
-    t.movementType !== "REVERSAL" && 
-    t.installmentId
-  );
+  const totalOutflows = outflowCatData.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
+  const totalInflows = inflowCatData.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
 
-  const outflowByCategory = new Map<string, number>();
-  const outflowByInstrument = new Map<string, number>();
-  let totalOutflows = 0;
-
-  const inflowByCategory = new Map<string, number>();
-  const inflowByInstrument = new Map<string, number>();
-  let totalInflows = 0;
-
-  thisMonthTransactions.forEach(t => {
-    const amount = t.effectiveAmount || 0;
-    const catName = opTypeByInstallmentId.get(t.installmentId) ?? "Outros";
-    const instName = t.paymentInstrumentId ? (instrumentById.get(t.paymentInstrumentId) ?? "Indefinido") : "Saldo da Conta / Dinheiro";
-
-    // Se a transação for um PAGAMENTO NORMAL (Não é estorno)
-    if (t.movementType !== "REVERSAL") {
-      if (t.movementDirection === "OUTFLOW") { // Pagou uma conta (Despesa)
-        totalOutflows += amount;
-        outflowByCategory.set(catName, (outflowByCategory.get(catName) ?? 0) + amount);
-        outflowByInstrument.set(instName, (outflowByInstrument.get(instName) ?? 0) + amount);
-      } else if (t.movementDirection === "INFLOW") { // Recebeu um dinheiro (Receita)
-        totalInflows += amount;
-        inflowByCategory.set(catName, (inflowByCategory.get(catName) ?? 0) + amount);
-        inflowByInstrument.set(instName, (inflowByInstrument.get(instName) ?? 0) + amount);
-      }
-    } 
-    // Se a transação for um ESTORNO
-    else {
-      if (t.movementDirection === "INFLOW") { // Estornou uma Despesa (Devolveu dinheiro) -> Abate da Despesa
-        totalOutflows -= amount;
-        outflowByCategory.set(catName, (outflowByCategory.get(catName) ?? 0) - amount);
-        outflowByInstrument.set(instName, (outflowByInstrument.get(instName) ?? 0) - amount);
-      } else if (t.movementDirection === "OUTFLOW") { // Estornou uma Receita (Devolveu dinheiro) -> Abate da Receita
-        totalInflows -= amount;
-        inflowByCategory.set(catName, (inflowByCategory.get(catName) ?? 0) - amount);
-        inflowByInstrument.set(instName, (inflowByInstrument.get(instName) ?? 0) - amount);
-      }
-    }
-  });
-
-  const outflowCatData = Array.from(outflowByCategory.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  const outflowInstData = Array.from(outflowByInstrument.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-
-  const inflowCatData = Array.from(inflowByCategory.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  const inflowInstData = Array.from(inflowByInstrument.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[60vh] text-muted-foreground">
+        Carregando painel financeiro...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-12">
@@ -157,11 +117,13 @@ function DashboardPage() {
         } 
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Saldo consolidado" value={formatMoney(totalBalance)} hint={`${accounts.data?.length ?? 0} contas cadastradas`} icon={<PiggyBank className="size-5" />} />
-        <SummaryCard label="A receber" value={formatMoney(toReceive)} hint="Parcelas de entrada em aberto" tone="inflow" icon={<ArrowUpRight className="size-5" />} />
-        <SummaryCard label="A pagar" value={formatMoney(toPay)} hint="Parcelas de saída em aberto" tone="outflow" icon={<ArrowDownRight className="size-5" />} />
-        <SummaryCard label="Vencendo em 15 dias" value={String(dueSoon.length)} hint={dueSoon.length ? "Confira antes que vire juros" : "Nada urgente por aqui"} tone="pending" icon={<CalendarClock className="size-5" />} />
+      {/* Caixa de Patrimônio Injetada e Valores formatados de forma segura */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard label="Patrimônio Total" value={formatMoney(patrimonioTotal)} hint="Contas + Investimentos" icon={<Landmark className="size-5" />} />
+        <SummaryCard label="Saldo das Contas" value={formatMoney(saldoContas)} hint="Soma das contas ativas" icon={<PiggyBank className="size-5" />} />
+        <SummaryCard label="A receber" value={formatMoney(Number(summary?.toReceive || 0))} hint="Parcelas de entrada em aberto" tone="inflow" icon={<ArrowUpRight className="size-5" />} />
+        <SummaryCard label="A pagar" value={formatMoney(Number(summary?.toPay || 0))} hint="Parcelas de saída em aberto" tone="outflow" icon={<ArrowDownRight className="size-5" />} />
+        <SummaryCard label="Vencendo em 15 dias" value={String(summary?.dueSoonCount || 0)} hint={summary?.dueSoonCount ? "Confira antes que vire juros" : "Nada urgente por aqui"} tone="pending" icon={<CalendarClock className="size-5" />} />
       </div>
 
       <Tabs value={raioXTab} onValueChange={setRaioXTab} className="mt-8 mb-8">
@@ -194,10 +156,11 @@ function DashboardPage() {
                 <div className="space-y-4">
                   {currentCatData.length === 0 ? (<p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">Sem registros neste mês.</p>) : (
                     currentCatData.map(item => {
-                      const pct = currentTotal > 0 ? Math.round((item.value / currentTotal) * 100) : 0;
+                      const itemVal = Number(item.value || 0);
+                      const pct = currentTotal > 0 ? Math.round((itemVal / currentTotal) * 100) : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(item.value)}</span></div>
+                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(itemVal)}</span></div>
                           <div className="h-2 w-full bg-secondary rounded-full overflow-hidden flex items-center relative">
                             <div className={`h-full ${colorBg} transition-all`} style={{ width: `${pct}%` }} />
                             <span className="text-[10px] ml-2 text-muted-foreground absolute right-2 font-mono">{pct}%</span>
@@ -217,10 +180,11 @@ function DashboardPage() {
                 <div className="space-y-4">
                   {currentInstData.length === 0 ? (<p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">Sem registros neste mês.</p>) : (
                     currentInstData.map(item => {
-                      const pct = currentTotal > 0 ? Math.round((item.value / currentTotal) * 100) : 0;
+                      const itemVal = Number(item.value || 0);
+                      const pct = currentTotal > 0 ? Math.round((itemVal / currentTotal) * 100) : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(item.value)}</span></div>
+                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(itemVal)}</span></div>
                           <div className="h-2 w-full bg-secondary rounded-full overflow-hidden flex items-center relative">
                             <div className={`h-full ${colorBg} transition-all`} style={{ width: `${pct}%` }} />
                             <span className="text-[10px] ml-2 text-muted-foreground absolute right-2 font-mono">{pct}%</span>
@@ -242,11 +206,11 @@ function DashboardPage() {
           <p className="text-sm text-muted-foreground">Movimentações efetivadas por mês</p>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+              <BarChart data={summary?.chartData || []}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                 <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
                 <YAxis tickLine={false} axisLine={false} fontSize={12} width={60} />
-                <Tooltip formatter={(value: any) => formatMoney(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)", }} />
+                <Tooltip formatter={(value: any) => formatMoney(Number(value || 0))} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)" }} />
                 <Bar dataKey="entradas" fill="var(--inflow)" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="saidas" fill="var(--outflow)" radius={[6, 6, 0, 0]} />
               </BarChart>
@@ -269,8 +233,8 @@ function DashboardPage() {
                     setSelectedInstallmentToPay({
                       ...installment,
                       invoiceData: invoice,
-                      personName: invoice.person?.name || "Desconhecido", // 🌟 BUG CORRIGIDO AQUI!
-                      remainingBalance: installment.amount - (installment.totalPaid || 0),
+                      personName: invoice.person?.name || "Desconhecido", 
+                      remainingBalance: Number(installment.amount || 0) - Number(installment.totalPaid || 0),
                     });
                     setPaymentModalOpen(true);
                   }}
@@ -281,7 +245,7 @@ function DashboardPage() {
                       <p className="text-xs text-muted-foreground">Vence em {formatDate(installment.dueDate)}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-money text-sm font-bold">{formatMoney(installment.amount - installment.totalPaid)}</p>
+                      <p className="text-money text-sm font-bold">{formatMoney(Number(installment.amount || 0) - Number(installment.totalPaid || 0))}</p>
                       <InstallmentStatusBadge status={installment.status} />
                     </div>
                   </div>
@@ -300,7 +264,6 @@ function DashboardPage() {
         onSuccess={() => setSelectedInstallmentToPay(null)} 
       />
 
-      {/* 🌟 RENDERIZANDO O NOVO MODAL */}
       <NewInvoiceDialog 
         open={invoiceModalOpen} 
         onOpenChange={setInvoiceModalOpen} 
@@ -308,16 +271,4 @@ function DashboardPage() {
       />
     </div>
   );
-}
-
-function buildMonthlyChart(transactions: { paymentDate: string; effectiveAmount: number; movementDirection: string }[]) {
-  const byMonth = new Map<string, { month: string; entradas: number; saidas: number }>();
-  for (const t of transactions) {
-    const key = t.paymentDate.slice(0, 7);
-    const entry = byMonth.get(key) ?? { month: key.slice(5) + "/" + key.slice(2, 4), entradas: 0, saidas: 0 };
-    if (t.movementDirection === "INFLOW") entry.entradas += t.effectiveAmount;
-    else entry.saidas += t.effectiveAmount;
-    byMonth.set(key, entry);
-  }
-  return [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v);
 }

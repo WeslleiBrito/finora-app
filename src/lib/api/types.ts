@@ -1,4 +1,78 @@
-// Tipos derivados das DTOs do backend Spring Boot (OpenAPI /v3/api-docs).
+// Tipagem para os detalhes de ordenação
+export interface Sort {
+  empty: boolean;
+  sorted: boolean;
+  unsorted: boolean;
+}
+
+// Tipagem para os metadados da página atual
+export interface Pageable {
+  pageNumber: number;
+  pageSize: number;
+  sort: Sort;
+  offset: number;
+  paged: boolean;
+  unpaged: boolean;
+}
+
+// O mapeamento fiel da resposta (Page<T>) do Spring Boot
+export interface PageResponse<T> {
+  content: T[];
+  pageable: Pageable;
+  totalElements: number;
+  totalPages: number;
+  last: boolean;
+  size: number;
+  number: number;
+  sort: Sort;
+  numberOfElements: number;
+  first: boolean;
+  empty: boolean;
+}
+
+export interface CategoryTotalDTO {
+  name: string;
+  value: number;
+}
+
+export interface InstrumentTotalDTO {
+  name: string;
+  value: number;
+}
+
+export interface MonthlyChartDTO {
+  month: string;
+  entradas: number;
+  saidas: number;
+}
+
+export interface CreditCardSummaryDTO {
+  globalLimit: number;
+  globalAvailable: number;
+  globalUsed: number;
+  bestCard: { cardName: string; daysToPay: number; nextDue: string } | null;
+  snowballChartData: { month: string; total: number }[];
+}
+
+export interface DashboardSummaryDTO {
+  totalBalance: number;
+  toReceive: number;
+  toPay: number;
+  dueSoonCount: number;
+  outflowByCategory: CategoryTotalDTO[];
+  outflowByInstrument: InstrumentTotalDTO[];
+  inflowByCategory: CategoryTotalDTO[];
+  inflowByInstrument: InstrumentTotalDTO[];
+  chartData: MonthlyChartDTO[];
+}
+
+export interface InstallmentSummaryDTO {
+  totalPaid: number;
+  totalThisMonth: number;
+  totalOverdue: number;
+  totalOpen: number;
+  chartData: { name: string; total: number }[];
+}
 
 export type UUID = string;
 
@@ -306,4 +380,32 @@ export interface CreateManualAdjustmentTransactionDTO {
 
 export interface CreateManualAdjustmentTransactionRequestDTO {
   dto: CreateManualAdjustmentTransactionDTO[];
+}
+
+export interface InvestmentTransactionDTO {
+  id: string;
+  type: "APPORT" | "RESCUE" | "DAILY_YIELD";
+  amount: number;
+  grossAmount: number;
+  irTax: number;
+  iofTax: number;
+  referenceDate: string;
+  appliedMarketRate: number;
+  description: string;
+}
+
+export interface FixedIncomeDashboardDTO {
+  id: string;
+  name: string;
+  type: string;
+  indexer: string;
+  contractedRate: number;
+  status: string;
+  accountId: string;
+  accountName: string;
+  totalPrincipal: number;
+  netBalance: number;
+  totalProfit: number;
+  maturityDate: string;
+  history: InvestmentTransactionDTO[];
 }

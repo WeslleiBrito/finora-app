@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Landmark, Plus, AlertTriangle, Calculator, Wand2, FileText, Calendar } from "lucide-react"; 
+import { CheckCircle2, Landmark, Plus, AlertTriangle, Calculator, Wand2, FileText, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -16,13 +16,14 @@ import { formatMoney, todayIso, parseLocalDate } from "@/lib/format";
 import { AccountDialog } from "./account-dialog";
 import { PaymentTypeMeta } from "@/lib/constants";
 
-import { InvoiceHistoryDialog } from "./invoice-history-dialog"; 
+import { InvoiceHistoryDialog } from "./invoice-history-dialog";
+import { InstallmentResponseDTO } from "@/lib/api/types";
 
 interface BatchPaymentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  installments: any[]; 
-  onSuccess: () => void; 
+  installments: InstallmentResponseDTO[] | any[];
+  onSuccess: () => void;
 }
 
 type ItemData = {
@@ -35,6 +36,20 @@ type ItemData = {
   paymentDate: string; // 🌟 A Data individual já estava no tipo, agora vai para a interface!
 };
 
+function isPaymentInstallmentList(lista: any[]): lista is InstallmentResponseDTO[] {
+  if (!lista || lista.length === 0) return false;
+
+  const primeiroItem = lista[0];
+
+  // Verifica se é um objeto e se tem a propriedade com o tipo correto
+  return (
+    primeiroItem !== null &&
+    typeof primeiroItem === 'object' &&
+    'movementType' in primeiroItem &&
+    primeiroItem.movementType === 'PAYMENT'
+  );
+}
+
 export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess }: BatchPaymentDialogProps) {
   const queryClient = useQueryClient();
   const accounts = useQuery(accountsQuery);
@@ -42,7 +57,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
 
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [items, setItems] = useState<Record<string, ItemData>>({});
-  
+
   // 🌟 Estados Globais para a "Varinha Mágica" (Preenchimento Rápido)
   const [globalInstrumentId, setGlobalInstrumentId] = useState("");
   const [globalAccountId, setGlobalAccountId] = useState("");
@@ -53,7 +68,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
 
   useEffect(() => {
     if (open && installments.length > 0) {
-      setGlobalInstrumentId(""); 
+      setGlobalInstrumentId("");
       setGlobalAccountId("");
       setGlobalPaymentDate("");
       const initial: Record<string, ItemData> = {};
@@ -64,7 +79,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
           fine: 0,
           discount: 0,
           accountId: inst.accountId || "",
-          instrumentId: inst.paymentInstrumentId || "", 
+          instrumentId: inst.paymentInstrumentId || "",
           paymentDate: todayIso()
         };
       });
@@ -79,14 +94,14 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
       Object.keys(prev).forEach(key => {
         const currentItem = prev[key];
         if (currentItem) {
-          nextItems[key] = { 
-            ...currentItem, 
+          nextItems[key] = {
+            ...currentItem,
             ...(globalAccountId ? { accountId: globalAccountId } : {}),
             ...(globalInstrumentId ? { instrumentId: globalInstrumentId } : {}),
             ...(globalPaymentDate ? { paymentDate: globalPaymentDate } : {})
           };
           // Proteção cruzada
-          if (globalAccountId && !globalInstrumentId) nextItems[key].instrumentId = ""; 
+          if (globalAccountId && !globalInstrumentId) nextItems[key].instrumentId = "";
         }
       });
       return nextItems;
@@ -98,7 +113,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
     setItems(prev => {
       const currentItem = prev[id] || { amount: 0, interest: 0, fine: 0, discount: 0, accountId: "", instrumentId: "", paymentDate: todayIso() };
       const updated = { ...currentItem, [field]: value };
-      if (field === "accountId") updated.instrumentId = ""; 
+      if (field === "accountId") updated.instrumentId = "";
       return { ...prev, [id]: updated };
     });
   };
@@ -118,7 +133,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
     const numInterest = Number(data.interest) || 0;
     const numFine = Number(data.fine) || 0;
     const numDiscount = Number(data.discount) || 0;
-    
+
     const effective = numAmount + numInterest + numFine - numDiscount;
     totalPrincipal += numAmount;
     totalEffective += Math.max(0, effective);
@@ -141,8 +156,18 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
   let hasWalletError = false;
   Object.entries(accountEffectiveSums).forEach(([accId, total]) => {
     const acc = (accounts.data ?? []).find((a: any) => a.id === accId);
-    if (acc?.type === "WALLET" && total > acc.balance) hasWalletError = true;
+
+    // 1. Verifica se a conta é WALLET e se estourou o saldo
+    const isWalletOverdrawn = acc?.type === "WALLET" && total > acc.balance;
+
+    // 2. Valida se a lista de parcelas é de fato do tipo "PAYMENT"
+    const isPayment = isPaymentInstallmentList(installments);
+
+    if (isWalletOverdrawn && isPayment) {
+      hasWalletError = true;
+    }
   });
+
 
   const payBatch = useMutation({
     mutationFn: () => api.createTransaction({ transactions: transactionsPayload }),
@@ -150,7 +175,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
       toast.success(`${installments.length} transações processadas com sucesso!`);
-      onSuccess(); 
+      onSuccess();
       onOpenChange(false);
     },
     onError: (err: any) => toast.error(err.message || "Erro ao processar lote."),
@@ -163,7 +188,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl p-0 overflow-hidden flex flex-col max-h-[90vh]">
-          
+
           <DialogHeader className="p-6 pb-4 border-b bg-muted/30">
             <DialogTitle className="flex items-center justify-between text-xl">
               <span className="flex items-center gap-2"><CheckCircle2 className="size-5 text-primary" /> Cockpit de Liquidação em Lote</span>
@@ -183,7 +208,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                 <SelectTrigger className="h-8 text-xs w-[180px] bg-background border-primary/20"><SelectValue placeholder="Conta Padrão..." /></SelectTrigger>
                 <SelectContent>{(accounts.data ?? []).map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
               </Select>
-              
+
               <Select value={globalInstrumentId} onValueChange={setGlobalInstrumentId}>
                 <SelectTrigger className="h-8 text-xs w-[180px] bg-background border-primary/20"><SelectValue placeholder="Forma Padrão..." /></SelectTrigger>
                 <SelectContent>{globalValidInstruments.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.cardHolderName || PaymentTypeMeta[i.paymentType] || i.paymentType}</SelectItem>)}</SelectContent>
@@ -196,14 +221,14 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
               </Button>
             </div>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {hasWalletError && (
               <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg flex items-center gap-2">
                 <AlertTriangle className="size-4" /> Uma ou mais transações estouram o limite da Carteira (Dinheiro Físico). Revise os saldos.
               </div>
             )}
-            
+
             {missingDates && (
               <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg flex items-center gap-2">
                 <AlertTriangle className="size-4" /> Todas as parcelas precisam ter a data do pagamento informada.
@@ -216,7 +241,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                 const newBalance = Math.max(0, inst.remainingBalance - (Number(data.amount) || 0));
                 const rowAcc = (accounts.data ?? []).find((a: any) => a.id === data.accountId);
                 const isWallet = rowAcc?.type === "WALLET";
-                
+
                 const validInstruments = (instruments.data ?? []).filter((i: any) => {
                   if (i.instrumentNature !== "PAYMENT") return false;
                   if (isWallet) return i.paymentType === "CASH";
@@ -229,9 +254,9 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-sm text-primary">{inst.personName}</p>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
                             title="Ver histórico da fatura"
                             onClick={() => {
@@ -247,21 +272,21 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
                         </p>
                       </div>
                       {newBalance > 0 ? (
-                         <span className="text-[10px] font-medium bg-pending/10 text-pending px-2 py-1 rounded-md">Restará {formatMoney(newBalance)}</span>
+                        <span className="text-[10px] font-medium bg-pending/10 text-pending px-2 py-1 rounded-md">Restará {formatMoney(newBalance)}</span>
                       ) : (
-                         <span className="text-[10px] font-medium bg-inflow/10 text-inflow px-2 py-1 rounded-md">Será Quitada</span>
+                        <span className="text-[10px] font-medium bg-inflow/10 text-inflow px-2 py-1 rounded-md">Será Quitada</span>
                       )}
                     </div>
 
                     {/* 🌟 GRID ATUALIZADO COM 8 COLUNAS PARA CABER A DATA DE PAGAMENTO */}
                     <div className="grid md:grid-cols-8 gap-3">
                       <div className="md:col-span-2 space-y-1">
-                        <Label className="text-[10px] text-muted-foreground"><Calendar className="inline size-3 mr-1"/>Data Baixa</Label>
+                        <Label className="text-[10px] text-muted-foreground"><Calendar className="inline size-3 mr-1" />Data Baixa</Label>
                         <Input type="date" className={`h-8 text-xs ${!data.paymentDate ? 'border-destructive' : ''}`} value={data.paymentDate} onChange={(e) => updateItem(inst.id, "paymentDate", e.target.value)} />
                       </div>
 
                       <div className="md:col-span-2 space-y-1">
-                        <Label className="text-[10px] text-muted-foreground"><Landmark className="inline size-3 mr-1"/>Conta</Label>
+                        <Label className="text-[10px] text-muted-foreground"><Landmark className="inline size-3 mr-1" />Conta</Label>
                         <Select value={data.accountId} onValueChange={(val) => updateItem(inst.id, "accountId", val)}>
                           <SelectTrigger className={`h-8 text-xs bg-muted/20 border-primary/20 ${!data.accountId ? 'border-destructive' : ''}`}><SelectValue placeholder="Selecione" /></SelectTrigger>
                           <SelectContent>
@@ -318,7 +343,7 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
               </div>
               <div className="border-l pl-6">
                 <p className="text-muted-foreground text-[10px] mb-1 uppercase tracking-wider font-bold flex items-center gap-1">
-                  <Calculator className="size-3"/> Fluxo de Caixa (Saída)
+                  <Calculator className="size-3" /> Fluxo de Caixa (Saída)
                 </p>
                 <p className="text-2xl font-black text-primary">{formatMoney(totalEffective)}</p>
               </div>
@@ -335,12 +360,12 @@ export function BatchPaymentDialog({ open, onOpenChange, installments, onSuccess
         </DialogContent>
       </Dialog>
 
-      <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={() => {}} />
-      
-      <InvoiceHistoryDialog 
-        open={historyModalOpen} 
-        onOpenChange={setHistoryModalOpen} 
-        invoice={selectedInvoice} 
+      <AccountDialog open={accountModalOpen} onOpenChange={setAccountModalOpen} onSuccess={() => { }} />
+
+      <InvoiceHistoryDialog
+        open={historyModalOpen}
+        onOpenChange={setHistoryModalOpen}
+        invoice={selectedInvoice}
       />
     </>
   );

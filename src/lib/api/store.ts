@@ -8,10 +8,16 @@ import type {
   CreateTransactionDTO,
   CreditCardCreateRequestDTO,
   CreditCardDetailsDTO,
+  CreditCardSummaryDTO,
+  DashboardSummaryDTO,
+  FixedIncomeDashboardDTO,
+  InstallmentDTO,
+  InstallmentSummaryDTO,
   InvoiceResponseDTO,
   MovementType,
   OperationGroupResponseDTO,
   OperationTypeResponseDTO,
+  PageResponse,
   PersonCreateLegalRequestDTO,
   PersonCreatePhysicalRequestDTO,
   PersonResponseDTO,
@@ -58,6 +64,7 @@ async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise
   return response.json();
 }
 
+
 export const api = {
   // ==========================================
   // BUSCAS SIMPLES (CADASTROS)
@@ -82,11 +89,59 @@ export const api = {
     return fetchApi<PersonResponseDTO[]>("/person"); // Mapeia para PersonController
   },
 
+  // Adicione dentro de "export const api = {"
+  async searchTransactions(params: Record<string, any>) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== "" && value !== "ALL") {
+        query.append(key, String(value));
+      }
+    });
+    const response = await fetchApi<PageResponse<TransactionResponseDTO>>(`/transactions/search?${query.toString()}`);
+    console.log(response);
+    return response;
+  },
+
+  async getCreditCardSummary(): Promise<CreditCardSummaryDTO> {
+    return fetchApi<CreditCardSummaryDTO>("/credit-card/summary");
+  },
+  // ==========================================
+  // PARCELAS E RESUMOS DINÂMICOS
+  // ==========================================
+  async searchInstallments(params: Record<string, any>) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== "" && value !== "ALL") {
+        query.append(key, String(value));
+      }
+    });
+    return fetchApi<PageResponse<InstallmentDTO>>(`/installments/search?${query.toString()}`);
+  },
+
+  async getInstallmentsSummary(params: Record<string, any>) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== "" && value !== "ALL") {
+        query.append(key, String(value));
+      }
+    });
+    return fetchApi<InstallmentSummaryDTO>(`/installments/summary?${query.toString()}`);
+  },
+  
+  // ==========================================
+  // DASHBOARD
+  // ==========================================
+  async getDashboardSummary(): Promise<DashboardSummaryDTO> {
+    return fetchApi<DashboardSummaryDTO>("/dashboard/summary");
+  },
+  
   // ==========================================
   // CONTAS
   // ==========================================
-  async listAccounts() {
-    return fetchApi<AccountResponseDTO[]>("/account"); // Mapeia para AccountController
+  async listAccounts(): Promise<AccountResponseDTO[]> {
+    const response = await fetchApi<PageResponse<AccountResponseDTO>>("/account");
+    // Se o Spring não devolver o objeto com content (ex: erro 500 ignorado), devolvemos um array vazio para não quebrar o .filter()
+    return response.content || []; 
   },
 
   async createAccount(input: any) {
@@ -145,8 +200,9 @@ export const api = {
   // ==========================================
   // FATURAS (INVOICES)
   // ==========================================
-  async listInvoices() {
-    return fetchApi<InvoiceResponseDTO[]>("/invoice"); // Mapeia para InvoiceController
+  async listInvoices(): Promise<InvoiceResponseDTO[]> {
+    const response = await fetchApi<PageResponse<InvoiceResponseDTO>>("/invoice");
+    return response.content || []; 
   },
 
   async getInvoice(id: UUID) {
@@ -165,12 +221,13 @@ export const api = {
       method: "DELETE"
     })
   },
+
   // ==========================================
   // TRANSAÇÕES (PAGAMENTOS/RECEBIMENTOS)
   // ==========================================
-  async listTransactions() {
-    // Atenção: Esta rota precisará ser criada no seu Spring Boot!
-    return fetchApi<TransactionResponseDTO[]>("/transactions");
+  async listTransactions(): Promise<TransactionResponseDTO[]> {
+    const response = await fetchApi<PageResponse<TransactionResponseDTO>>("/transactions");
+    return response.content
   },
 
   async createTransaction(input: {transactions: Array<CreateTransactionDTO>}) {
@@ -288,6 +345,41 @@ export const api = {
     
     return fetchApi<PersonResponseDTO>(endpoint, {
       method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  // Adicione junto com o createPerson existente:
+
+  async updatePhysicalPerson(id: string, payload: any): Promise<any> {
+    return fetchApi(`/person/update/physical/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateLegalPerson(id: string, payload: any): Promise<any> {
+    return fetchApi(`/person/update/legal/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // ==========================================
+  // INVESTIMENTOS (RENDA FIXA)
+  // ==========================================
+  async getInvestmentDashboards(accountId: string) {
+    return fetchApi<FixedIncomeDashboardDTO[]>(`/investments/account/${accountId}/dashboards`);
+  },
+  async createApport(input: any) {
+    return fetchApi<void>("/investments/apport", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  async executeRescue(input: any) {
+    return fetchApi<void>("/investments/rescue", {
+      method: "POST",
       body: JSON.stringify(input),
     });
   },

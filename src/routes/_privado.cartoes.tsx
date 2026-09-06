@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { CreditCard, Sparkles, TrendingUp, AlertTriangle, CalendarDays, Wallet, ReceiptText } from "lucide-react";
+import { CreditCard, Sparkles, TrendingUp, AlertTriangle, CalendarDays, Wallet, ReceiptText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -11,22 +11,15 @@ import { ActiveBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
-import { banksQuery, cardBrandsQuery, cardsQuery, invoicesQuery } from "@/lib/api/queries";
+// 🌟 Consumindo as queries do novo back-end
+import { banksQuery, cardBrandsQuery, cardsQuery, creditCardSummaryQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, parseLocalDate } from "@/lib/format";
 import { PayInvoiceDialog } from "@/components/modals/pay-invoice-dialog";
 
 export const Route = createFileRoute("/_privado/cartoes")({
@@ -44,8 +37,9 @@ function CardsPage() {
   const cards = useQuery(cardsQuery);
   const brands = useQuery(cardBrandsQuery);
   const banks = useQuery(banksQuery);
-
-  const invoices = useQuery(invoicesQuery);
+  
+  // 🌟 O NOVO RESUMO DO BACK-END
+  const { data: summary, isLoading: isLoadingSummary } = useQuery(creditCardSummaryQuery);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -60,24 +54,25 @@ function CardsPage() {
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
-  // 🌟 Estados para o Modal de Rateio (Baixa de Fatura)
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [selectedMonthToPay, setSelectedMonthToPay] = useState<string | null>(null);
+
+  // 🌟 Busca dinâmica das faturas SÓ para o cartão clicado (com size alto para vir tudo)
+  const { data: cardInstallmentsResponse, isLoading: isLoadingFaturas } = useQuery({
+    queryKey: ["installments", { direction: "OUTFLOW", instrumentId: selectedCardId }],
+    queryFn: () => api.searchInstallments({ direction: "OUTFLOW", instrumentId: selectedCardId, size: 500 }),
+    enabled: !!selectedCardId && invoiceModalOpen,
+  });
 
   const create = useMutation({
     mutationFn: () =>
       api.createCreditCard({
-        name,
-        creditLimit: Number(limit) || 0,
-        closingDay: Number(closingDay) || 1,
-        dueDay: Number(dueDay) || 1,
-        cardBrandId: brandId,
-        revolvingInterest: Number(revolvingInterest) || 0,
-        fine: Number(fine) || 0,
-        ...(bankId ? { bankId } : {}),
+        name, creditLimit: Number(limit) || 0, closingDay: Number(closingDay) || 1, dueDay: Number(dueDay) || 1,
+        cardBrandId: brandId, revolvingInterest: Number(revolvingInterest) || 0, fine: Number(fine) || 0, ...(bankId ? { bankId } : {}),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-card-summary"] });
       toast.success("Cartão cadastrado");
       setOpen(false);
       setName(""); setLimit("1000"); setClosingDay("5"); setDueDay("12");
@@ -90,132 +85,57 @@ function CardsPage() {
     mutationFn: (id: string) => api.toggleCardStatus(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-card-summary"] });
       toast.success("Status do cartão atualizado");
     },
   });
 
   const cardsList = cards.data ?? [];
-  const totalLimit = cardsList.reduce((acc: any, c: any) => acc + c.creditLimit, 0);
-  const totalAvailable = cardsList.reduce((acc: any, c: any) => acc + c.availableLimit, 0);
-  const totalUsed = totalLimit - totalAvailable;
 
-  const bestCard = useMemo(() => {
-    if (cardsList.length === 0) return null;
-    const today = new Date();
-    const currentDay = today.getDate();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
-
-    let maxDays = -1;
-    let best: any = null;
-
-    cardsList.forEach((card: any) => {
-      if (card.status !== "ACTIVE") return;
-      let targetMonth = currentMonth;
-      let targetYear = currentYear;
-
-      if (currentDay > card.closingDay) {
-        targetMonth += 1;
-        if (targetMonth > 11) { targetMonth = 0; targetYear += 1; }
-      }
-
-      if (card.dueDay < card.closingDay) {
-        targetMonth += 1;
-        if (targetMonth > 11) { targetMonth = 0; targetYear += 1; }
-      }
-
-      const dueDate = new Date(targetYear, targetMonth, card.dueDay);
-      const diffTime = dueDate.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-      if (diffDays > maxDays) {
-        maxDays = diffDays;
-        best = { ...card, daysToPay: diffDays, nextDue: dueDate };
-      }
-    });
-
-    return best;
-  }, [cardsList]);
-
-  const snowballChartData = useMemo(() => {
-    const today = new Date();
-    const currentMonthStr = today.toISOString().slice(0, 7);
-
-    const allCardInstallments = cardsList.flatMap((card: any) => card.installments || []);
-
-    const futureInstallments = allCardInstallments.filter((inst: any) => {
-      if (!inst.dueDate) return false;
-      const dueStr = inst.dueDate.slice(0, 7);
-      return dueStr >= currentMonthStr && inst.status !== "FINALIZED" && inst.status !== "CANCELLED";
-    });
-
-    const grouped = futureInstallments.reduce((acc: any, inst: any) => {
-      const month = inst.dueDate.slice(0, 7);
-      acc[month] = (acc[month] || 0) + (inst.amount - (inst.totalPaid || 0));
-      return acc;
-    }, {} as Record<string, number>);
-
-    return Object.entries(grouped)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(0, 6)
-      .map(([month, total]) => ({
-        month: month.slice(5) + "/" + month.slice(2, 4),
-        total
-      }));
-  }, [cardsList]);
-
+  // Agrupa as parcelas do cartão selecionado por mês (direto no front, pois já filtramos na query)
   const virtualInvoices = useMemo(() => {
-    if (!selectedCardId) return {};
+    if (!cardInstallmentsResponse?.content) return {};
 
-    const card = cardsList.find((c: any) => c.id === selectedCardId);
-    if (!card || !card.installments) return {};
-
-    return card.installments.reduce((acc: any, inst: any) => {
+    return cardInstallmentsResponse.content.reduce((acc: any, inst: any) => {
       if (!inst.dueDate) return acc;
 
       const month = inst.dueDate.slice(0, 7);
       if (!acc[month]) acc[month] = { installments: [], total: 0, paid: 0 };
 
-      const invoiceData = invoices.data?.find((inv: any) => inv.id === inst.invoiceId);
-
-      acc[month].installments.push({ ...inst, invoiceData });
+      acc[month].installments.push(inst);
       acc[month].total += inst.amount;
       acc[month].paid += (inst.totalPaid || 0);
 
       return acc;
     }, {} as Record<string, { installments: any[], total: number, paid: number }>);
-  }, [cardsList, selectedCardId, invoices.data]);
+  }, [cardInstallmentsResponse]);
 
   return (
     <>
       <PageHeader
         title="Gestão de Cartões"
         description="Controle seus limites, faturas e projeções."
-        action={
-          <Button className="rounded-full" onClick={() => setOpen(true)}>
-            Novo cartão
-          </Button>
-        }
+        action={<Button className="rounded-full" onClick={() => setOpen(true)}>Novo cartão</Button>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mb-8">
         <SummaryCard
           label="Limite Global Comprometido"
-          value={formatMoney(totalUsed)}
-          hint={`Disponível: ${formatMoney(totalAvailable)} de ${formatMoney(totalLimit)}`}
+          value={formatMoney(summary?.globalUsed || 0)}
+          hint={`Disponível: ${formatMoney(summary?.globalAvailable || 0)} de ${formatMoney(summary?.globalLimit || 0)}`}
           tone="outflow"
           icon={<CreditCard className="size-5" />}
         />
 
-        {bestCard ? (
+        {summary?.bestCard ? (
           <div className="rounded-2xl border bg-card p-5 shadow-sm bg-gradient-to-br from-primary/10 to-transparent border-primary/20">
             <div className="flex items-center gap-2 text-primary font-bold mb-2">
               <Sparkles className="size-5" /> Melhor cartão hoje
             </div>
-            <p className="text-xl font-bold">{bestCard.cardHolderName}</p>
+            <p className="text-xl font-bold">{summary.bestCard.cardName}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Comprando hoje, você ganha <strong>{bestCard.daysToPay} dias</strong> para pagar.
-              <br />(Vencimento base: {bestCard.nextDue.toLocaleDateString('pt-BR')})
+              Comprando hoje, você ganha <strong>{summary.bestCard.daysToPay} dias</strong> para pagar.
+              <br />(Vencimento base: {parseLocalDate(summary.bestCard.nextDue).toLocaleDateString('pt-BR')})
             </p>
           </div>
         ) : (
@@ -261,7 +181,7 @@ function CardsPage() {
                     <ActiveBadge active={card.status === "ACTIVE"} />
                   </div>
 
-                  <h2 className="mt-4 text-lg font-bold tracking-tight">{card.cardHolderName}</h2>
+                  <h2 className="mt-4 text-lg font-bold tracking-tight">{card.cardHolderName || card.name}</h2>
                   <p className="text-xs text-muted-foreground">
                     {card.cardBrand?.name} {card.bank ? `· ${card.bank.name}` : ""}
                   </p>
@@ -317,9 +237,11 @@ function CardsPage() {
               A "Bola de Neve" mostra o quanto do seu limite já está comprometido nos próximos meses apenas com compras parceladas.
             </p>
             <div className="h-64">
-              {snowballChartData.length > 0 ? (
+              {isLoadingSummary ? (
+                <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
+              ) : summary?.snowballChartData && summary.snowballChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={snowballChartData}>
+                  <BarChart data={summary.snowballChartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                     <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
                     <YAxis tickLine={false} axisLine={false} fontSize={12} width={60} />
@@ -396,7 +318,9 @@ function CardsPage() {
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto p-6">
-            {Object.keys(virtualInvoices).length === 0 ? (
+            {isLoadingFaturas ? (
+               <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" /></div>
+            ) : Object.keys(virtualInvoices).length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl">
                 Nenhuma compra encontrada para este cartão.
               </div>
@@ -407,7 +331,6 @@ function CardsPage() {
                   .map(([month, data]: [string, any]) => {
                     const [yearStr, monthStr] = month.split("-");
                     const monthName = new Date(Number(yearStr), Number(monthStr) - 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-
                     const isFullyPaid = Math.abs(data.total - data.paid) < 0.01;
 
                     return (
@@ -435,8 +358,8 @@ function CardsPage() {
                             {data.installments.map((inst: any, i: number) => (
                               <div key={i} className="flex items-center justify-between text-sm py-2 border-b last:border-0">
                                 <div>
-                                  <p className="font-semibold">{inst.invoiceData?.person?.name || "Desconhecido"}</p>
-                                  <p className="text-xs text-muted-foreground">Parcela {inst.parcelNumber} de {inst.invoiceData?.quantityInstallments}</p>
+                                  <p className="font-semibold">{inst.personName || "Desconhecido"}</p>
+                                  <p className="text-xs text-muted-foreground">Parcela {inst.parcelNumber} de {inst.quantityInstallments || "?"}</p>
                                 </div>
                                 <div className="text-right font-medium">
                                   {formatMoney(inst.amount)}
@@ -446,14 +369,7 @@ function CardsPage() {
                           </div>
 
                           <div className="mt-4 pt-4 border-t flex justify-end">
-                            <Button
-                              disabled={isFullyPaid}
-                              className="rounded-full bg-primary"
-                              onClick={() => {
-                                setSelectedMonthToPay(month);
-                                setPayModalOpen(true);
-                              }}
-                            >
+                            <Button disabled={isFullyPaid} className="rounded-full bg-primary" onClick={() => { setSelectedMonthToPay(month); setPayModalOpen(true); }}>
                               Baixar Fatura de {monthName.split(" ")[0]}
                             </Button>
                           </div>
@@ -467,21 +383,12 @@ function CardsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 🌟 INTEGRAÇÃO DO MODAL DE RATEIO DE FATURA */}
       {selectedMonthToPay && selectedCardId && virtualInvoices[selectedMonthToPay] && (
         <PayInvoiceDialog
           open={payModalOpen}
-          onOpenChange={(val) => {
-            setPayModalOpen(val);
-            if (!val) setSelectedMonthToPay(null);
-          }}
+          onOpenChange={(val) => { setPayModalOpen(val); if (!val) setSelectedMonthToPay(null); }}
           monthStr={selectedMonthToPay}
-          monthName={
-            new Date(
-              Number(selectedMonthToPay.split("-")[0]),
-              Number(selectedMonthToPay.split("-")[1]) - 1
-            ).toLocaleString("pt-BR", { month: "long", year: "numeric" })
-          }
+          monthName={new Date(Number(selectedMonthToPay.split("-")[0]), Number(selectedMonthToPay.split("-")[1]) - 1).toLocaleString("pt-BR", { month: "long", year: "numeric" })}
           openInstallments={virtualInvoices[selectedMonthToPay].installments}
           paymentInstrumentId={selectedCardId}
         />

@@ -126,18 +126,28 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
       toast.error("Selecione a Conta e o Instrumento padrão primeiro!");
       return;
     }
-    const total = Math.round((Number(totalAmount) || 0) * 100);
-    const count = Math.max(1, Math.min(Number(quantity) || 1, 36));
-    const base = Math.floor(total / count);
+    const totalCents = Math.round((Number(totalAmount) || 0) * 100);
+    // Removemos o limite de 36. Agora permite até 120 parcelas (10 anos).
+    const count = Math.max(1, Math.min(Number(quantity) || 1, 120)); 
+    
+    // Calcula o valor base e pega o resto exato da divisão
+    const baseCents = Math.floor(totalCents / count);
+    let remainder = totalCents % count;
 
-    const generated: Array<InstallmentDTO> = Array.from({ length: count }, (_, i) => ({
-      parcelNumber: i + 1,
-      amount: (i === count - 1 ? total - base * (count - 1) : base) / 100,
-      dueDate: addMonths(firstDueDate, i),
-      instrument: globalInstrumentId,
-      accountId: globalAccountId,
-      movementDirection: isPayment ? "OUTFLOW" : "INFLOW"
-    }));
+    const generated: Array<InstallmentDTO> = Array.from({ length: count }, (_, i) => {
+      // Distribui os centavos de resto, 1 centavo por parcela, até acabar o resto
+      const currentCents = baseCents + (remainder > 0 ? 1 : 0);
+      remainder--;
+
+      return {
+        parcelNumber: i + 1,
+        amount: currentCents / 100, // Converte de volta para Real (Ponto flutuante)
+        dueDate: addMonths(firstDueDate, i),
+        instrument: globalInstrumentId,
+        accountId: globalAccountId,
+        movementDirection: isPayment ? "OUTFLOW" : "INFLOW"
+      };
+    });
     setInstallments(generated);
   };
 
@@ -157,9 +167,48 @@ export function NewInvoiceDialog({ open, onOpenChange, defaultDirection = "PAYME
         purchaseDate, 
         installments, 
       }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      toast.success("Lançamento criado com sucesso!");
+    onSuccess: (faturaCriada) => {
+      // 1. Pega as parcelas já formatadas devolvidas pela sua API no momento da criação
+      const novasParcelas = faturaCriada.installments || [];
+
+      // Precisamos inferir o filtro atual de busca para atualizar o cache correto
+      // O filtro assume que estamos na aba de direção atual e não há outros filtros complexos aplicados
+      const filterParams = { direction: direction === "PAYMENT" ? "OUTFLOW" : "INFLOW", statusFilter: "ALL" };
+
+      // 2. ATUALIZA O MINI-DASHBOARD (O Resumo) instantaneamente na memória
+      queryClient.setQueryData(["installments-summary", filterParams], (oldSummary: any) => {
+        if (!oldSummary) return oldSummary;
+        
+        // Calcula o valor total gerado nesta nova fatura
+        const valorTotalCriado = novasParcelas.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+        
+        return {
+          ...oldSummary,
+          totalOpen: (oldSummary.totalOpen || 0) + valorTotalCriado
+        };
+      });
+
+      // 3. INJETA AS NOVAS PARCELAS NA LISTA INFINITA E REORDENA POR DATA
+      queryClient.setQueryData(["installments", { ...filterParams, page: 0 }], (oldData: any) => {
+        if (!oldData || !oldData.content) return oldData;
+
+        // Anexa as novas parcelas à lista que o usuário já está vendo
+        const listaAtualizada = [...oldData.content, ...novasParcelas];
+
+        // Reordena do vencimento mais próximo (hoje) para o mais distante (futuro)
+        listaAtualizada.sort((a, b) => {
+          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        });
+
+        return {
+          ...oldData,
+          content: listaAtualizada,
+          totalElements: (oldData.totalElements || 0) + novasParcelas.length // Atualiza o contador de resultados no rodapé
+        };
+      });
+
+      // 4. Limpa a interface e exibe o sucesso sem delays
+      toast.success("Lançamento registrado com sucesso!");
       handleOpenChange(false);
     },
     onError: (err: any) => toast.error(err.message),

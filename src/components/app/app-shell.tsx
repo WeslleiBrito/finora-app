@@ -1,7 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   CreditCard,
-  FileText,
   Landmark,
   LayoutDashboard,
   ReceiptText,
@@ -10,18 +9,20 @@ import {
   UserRound,
   ArrowDownToLine,
   ArrowUpFromLine,
+  TrendingUp
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 
 const nav = [
-  { to: "/dashboard", label: "Início", icon: LayoutDashboard },
-  { to: "/contas", label: "Contas", icon: Landmark },
-  { to: "/cartoes", label: "Cartões", icon: CreditCard },
-  { to: "/pagar", label: "A Pagar", icon: ArrowDownToLine },
-  { to: "/receber", label: "A Receber", icon: ArrowUpFromLine },
-  { to: "/transacoes", label: "Extrato", icon: ReceiptText },
+  { to: "/dashboard", label: "Início", icon: LayoutDashboard, active: true },
+  { to: "/contas", label: "Contas", icon: Landmark, active: true },
+  { to: "/investimentos", label: "Investimentos", icon: TrendingUp, active: true},
+  { to: "/cartoes", label: "Cartões", icon: CreditCard, active: true },
+  { to: "/pagar", label: "A Pagar", icon: ArrowDownToLine, active: true },
+  { to: "/receber", label: "A Receber", icon: ArrowUpFromLine, active: true },
+  { to: "/transacoes", label: "Extrato", icon: ReceiptText, active: true },
 ] as const;
 
 const secondary = [

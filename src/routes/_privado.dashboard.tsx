@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { SummaryCard } from "@/components/app/summary-card";
 import { InstallmentStatusBadge } from "@/components/app/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-// 🌟 Importando a nova query do Dashboard (e mantendo faturas/operações para o rodapé)
-import { dashboardSummaryQuery, invoicesQuery, operationTypesQuery } from "@/lib/api/queries";
+import { dashboardSummaryQuery, invoicesQuery, operationTypesQuery, accountsQuery, investmentDashboardsQuery } from "@/lib/api/queries";
 import { formatDate, formatMoney } from "@/lib/format";
 import { PaymentDialog } from "@/components/modals/payment-dialog";
 import { NewInvoiceDialog } from "@/components/modals/new-invoice-dialog";
@@ -19,14 +18,15 @@ import {
   PiggyBank, 
   CalendarClock, 
   LayoutList, 
-  CreditCard
+  CreditCard,
+  Landmark
 } from "lucide-react";
 
 export const Route = createFileRoute("/_privado/dashboard")({
   head: () => ({
     meta: [
       { title: "Resumo financeiro — Poupi" },
-      { name: "description", content: "Saldo consolidado, parcelas a vencer e movimentações recentes." },
+      { name: "description", content: "Patrimônio, saldo consolidado, parcelas a vencer e movimentações recentes." },
     ],
   }),
   component: DashboardPage,
@@ -40,12 +40,31 @@ function DashboardPage() {
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoiceDirection, setInvoiceDirection] = useState<"PAYMENT" | "RECEIPT">("PAYMENT");
 
-  // 🌟 Usando o nosso novo Endpoint unificado de processamento matemático
   const { data: summary, isLoading } = useQuery(dashboardSummaryQuery);
   const invoices = useQuery(invoicesQuery);
   const operationTypes = useQuery(operationTypesQuery);
+  const accountsRes = useQuery(accountsQuery);
+  
+  const accounts = accountsRes.data ?? [];
 
-  // Mapeamento e lógica mantidos APENAS para a lista clicável de "Próximas Parcelas"
+  // Busca em paralelo o dashboard de investimentos de todas as contas
+  const investmentQueries = useQueries({
+    queries: accounts.filter((a: any) => a.type !== "WALLET").map((acc: any) => ({
+      ...investmentDashboardsQuery(acc.id),
+      enabled: !!acc.id,
+    }))
+  });
+
+  // CORREÇÃO 1: Usando o nome correto do DTO (totalProjectedNetBalance) e garantindo fallback Numérico
+  const totalInvestments = investmentQueries.reduce((acc, query) => {
+    const dbs = (query.data as any[]) ?? [];
+    return acc + dbs.reduce((sum, inv) => sum + Number(inv.totalProjectedNetBalance || 0), 0);
+  }, 0);
+
+  // CORREÇÃO 2: Garantindo que o saldo das contas seja tratado como Número estrito
+  const saldoContas = Number(summary?.totalBalance || 0);
+  const patrimonioTotal = saldoContas + totalInvestments;
+
   const typeById = new Map((operationTypes.data || []).map((t) => [t.id, t]));
   
   const openInstallments = (invoices.data ?? [])
@@ -57,14 +76,13 @@ function DashboardPage() {
     )
     .sort((a, b) => a.installment.dueDate.localeCompare(b.installment.dueDate));
 
-  // 🌟 Extraindo os dados mastigados do backend para o Raio-X
   const outflowCatData = summary?.outflowByCategory || [];
   const outflowInstData = summary?.outflowByInstrument || [];
   const inflowCatData = summary?.inflowByCategory || [];
   const inflowInstData = summary?.inflowByInstrument || [];
 
-  const totalOutflows = outflowCatData.reduce((acc, curr) => acc + curr.value, 0);
-  const totalInflows = inflowCatData.reduce((acc, curr) => acc + curr.value, 0);
+  const totalOutflows = outflowCatData.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
+  const totalInflows = inflowCatData.reduce((acc, curr) => acc + Number(curr.value || 0), 0);
 
   if (isLoading) {
     return (
@@ -99,11 +117,12 @@ function DashboardPage() {
         } 
       />
 
-      {/* 🌟 Consumindo os cálculos de soma direto do DTO */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Saldo consolidado" value={formatMoney(summary?.totalBalance || 0)} hint="Soma de todas as contas ativas" icon={<PiggyBank className="size-5" />} />
-        <SummaryCard label="A receber" value={formatMoney(summary?.toReceive || 0)} hint="Parcelas de entrada em aberto" tone="inflow" icon={<ArrowUpRight className="size-5" />} />
-        <SummaryCard label="A pagar" value={formatMoney(summary?.toPay || 0)} hint="Parcelas de saída em aberto" tone="outflow" icon={<ArrowDownRight className="size-5" />} />
+      {/* Caixa de Patrimônio Injetada e Valores formatados de forma segura */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard label="Patrimônio Total" value={formatMoney(patrimonioTotal)} hint="Contas + Investimentos" icon={<Landmark className="size-5" />} />
+        <SummaryCard label="Saldo das Contas" value={formatMoney(saldoContas)} hint="Soma das contas ativas" icon={<PiggyBank className="size-5" />} />
+        <SummaryCard label="A receber" value={formatMoney(Number(summary?.toReceive || 0))} hint="Parcelas de entrada em aberto" tone="inflow" icon={<ArrowUpRight className="size-5" />} />
+        <SummaryCard label="A pagar" value={formatMoney(Number(summary?.toPay || 0))} hint="Parcelas de saída em aberto" tone="outflow" icon={<ArrowDownRight className="size-5" />} />
         <SummaryCard label="Vencendo em 15 dias" value={String(summary?.dueSoonCount || 0)} hint={summary?.dueSoonCount ? "Confira antes que vire juros" : "Nada urgente por aqui"} tone="pending" icon={<CalendarClock className="size-5" />} />
       </div>
 
@@ -137,10 +156,11 @@ function DashboardPage() {
                 <div className="space-y-4">
                   {currentCatData.length === 0 ? (<p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">Sem registros neste mês.</p>) : (
                     currentCatData.map(item => {
-                      const pct = currentTotal > 0 ? Math.round((item.value / currentTotal) * 100) : 0;
+                      const itemVal = Number(item.value || 0);
+                      const pct = currentTotal > 0 ? Math.round((itemVal / currentTotal) * 100) : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(item.value)}</span></div>
+                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(itemVal)}</span></div>
                           <div className="h-2 w-full bg-secondary rounded-full overflow-hidden flex items-center relative">
                             <div className={`h-full ${colorBg} transition-all`} style={{ width: `${pct}%` }} />
                             <span className="text-[10px] ml-2 text-muted-foreground absolute right-2 font-mono">{pct}%</span>
@@ -160,10 +180,11 @@ function DashboardPage() {
                 <div className="space-y-4">
                   {currentInstData.length === 0 ? (<p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">Sem registros neste mês.</p>) : (
                     currentInstData.map(item => {
-                      const pct = currentTotal > 0 ? Math.round((item.value / currentTotal) * 100) : 0;
+                      const itemVal = Number(item.value || 0);
+                      const pct = currentTotal > 0 ? Math.round((itemVal / currentTotal) * 100) : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(item.value)}</span></div>
+                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{item.name}</span><span className="font-bold text-muted-foreground">{formatMoney(itemVal)}</span></div>
                           <div className="h-2 w-full bg-secondary rounded-full overflow-hidden flex items-center relative">
                             <div className={`h-full ${colorBg} transition-all`} style={{ width: `${pct}%` }} />
                             <span className="text-[10px] ml-2 text-muted-foreground absolute right-2 font-mono">{pct}%</span>
@@ -185,12 +206,11 @@ function DashboardPage() {
           <p className="text-sm text-muted-foreground">Movimentações efetivadas por mês</p>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
-              {/* 🌟 Consumindo os dados do gráfico direto do DTO */}
               <BarChart data={summary?.chartData || []}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                 <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
                 <YAxis tickLine={false} axisLine={false} fontSize={12} width={60} />
-                <Tooltip formatter={(value: any) => formatMoney(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)", }} />
+                <Tooltip formatter={(value: any) => formatMoney(Number(value || 0))} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)" }} />
                 <Bar dataKey="entradas" fill="var(--inflow)" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="saidas" fill="var(--outflow)" radius={[6, 6, 0, 0]} />
               </BarChart>
@@ -214,7 +234,7 @@ function DashboardPage() {
                       ...installment,
                       invoiceData: invoice,
                       personName: invoice.person?.name || "Desconhecido", 
-                      remainingBalance: installment.amount - (installment.totalPaid || 0),
+                      remainingBalance: Number(installment.amount || 0) - Number(installment.totalPaid || 0),
                     });
                     setPaymentModalOpen(true);
                   }}
@@ -225,7 +245,7 @@ function DashboardPage() {
                       <p className="text-xs text-muted-foreground">Vence em {formatDate(installment.dueDate)}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-money text-sm font-bold">{formatMoney(installment.amount - installment.totalPaid)}</p>
+                      <p className="text-money text-sm font-bold">{formatMoney(Number(installment.amount || 0) - Number(installment.totalPaid || 0))}</p>
                       <InstallmentStatusBadge status={installment.status} />
                     </div>
                   </div>

@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "./store";
+import { ProductDashboardDTO } from "./types";
 
 export const accountsQuery = queryOptions({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
 export const cardsQuery = queryOptions({ queryKey: ["credit-cards"], queryFn: () => api.listCreditCards() });
@@ -41,8 +42,8 @@ export const paymentInstrumentsQuery = queryOptions({
   queryFn: () => api.listPaymentInstruments(),
 });
 
-export const investmentDashboardsQuery = (accountId: string) => queryOptions({
-  queryKey: ["investments", accountId],
+
+export const investmentDashboardsQuery = (accountId: string) => ({
+  queryKey: ['investments', accountId],
   queryFn: () => api.getInvestmentDashboards(accountId),
-  enabled: !!accountId && accountId !== "ALL"
 });

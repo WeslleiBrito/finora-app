@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
+import { TrendingUp, PiggyBank, Landmark, Plus, ArrowDownRight, ArrowUpRight, Search, Trash2, Info, Target, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
-import { TrendingUp, PiggyBank, Landmark, Plus, ArrowDownRight, ArrowUpRight, History, Search } from "lucide-react";
-import { PieChart, Pie, ResponsiveContainer, Tooltip as RechartsTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app/page-header";
 import { SummaryCard } from "@/components/app/summary-card";
@@ -17,6 +16,15 @@ import { accountsQuery, investmentDashboardsQuery } from "@/lib/api/queries";
 import { api } from "@/lib/api/store";
 import { formatMoney, parseLocalDate, todayIso } from "@/lib/format";
 import { format } from "date-fns";
+import type {
+  ProductDashboardDTO,
+  BoxDetailDTO,
+  LotDetailDTO,
+  TierRequestDTO,
+  YieldConvention,
+  AccountResponseDTO,
+  TierResponseDTO,
+} from "@/lib/api/types";
 
 export const Route = createFileRoute("/_privado/investimentos")({
   head: () => ({
@@ -30,282 +38,609 @@ export const Route = createFileRoute("/_privado/investimentos")({
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e'];
 
+const CONVENTION_LABELS: Record<YieldConvention, string> = {
+  CDI_EXPONENTIAL_252: "CDI Exponencial (dias úteis)",
+  SAVINGS_MONTHLY_ANNIVERSARY: "Poupança (aniversário mensal)",
+  IPCA_MONTHLY: "IPCA + juros (crédito mensal)",
+};
+
+type EnrichedProduct = ProductDashboardDTO & { accountId: string; accountName: string };
+type EnrichedBox = BoxDetailDTO & {
+  productId: string;
+  productName: string;
+  displayRate: number;
+  tiers: ProductDashboardDTO["tiers"];
+  type: string;
+  indexer: string;
+  convention: YieldConvention;
+  accountId: string;
+  accountName: string;
+};
+
+const formatTierDisplay = (tiers: TierResponseDTO[] | undefined, indexer: string, fallbackRate?: number) => {
+  if (!tiers || tiers.length === 0) return `${fallbackRate || 0}% do ${indexer}`;
+  if (tiers.length === 1) return `${tiers[0]?.rateMultiplier ?? fallbackRate ?? 0}% do ${indexer}`;
+  const maxRate = Math.max(...tiers.map(t => Number(t.rateMultiplier)));
+  return `Até ${maxRate}% do ${indexer} (Escalonado)`;
+};
+
+
+interface TierFormRow {
+  minBalance: string;
+  maxBalance: string;
+  rateMultiplier: string;
+  requiredMonthlyMovement: string;
+}
+
 function InvestmentsPage() {
   const queryClient = useQueryClient();
-  
+
   const accountsRes = useQuery(accountsQuery);
-  const accounts = accountsRes.data ?? [];
-  const validAccounts = accounts.filter((a: any) => a.type !== "WALLET");
+  const accounts: AccountResponseDTO[] = accountsRes.data ?? [];
+  const validAccounts = useMemo(() => accounts.filter((a) => a.type !== "WALLET"), [accounts]);
 
   const investmentQueries = useQueries({
-    queries: validAccounts.map((acc: any) => ({
-      ...investmentDashboardsQuery(acc.id),
-      enabled: !!acc.id,
+    queries: validAccounts.map((acc) => ({
+      ...investmentDashboardsQuery(acc?.id ?? ""),
+      enabled: !!acc?.id,
     }))
   });
 
+
   const isLoading = accountsRes.isLoading || investmentQueries.some(q => q.isLoading);
 
-  const allDashboards = useMemo(() => {
+  // Helper central de invalidação — usado em TODAS as mutações de sucesso
+  const refreshInvestmentData = () => {
+    void queryClient.invalidateQueries({ queryKey: ["investments"] });
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+  };
+
+  // EXTRAÇÃO DE PRODUTOS
+  const allProducts: EnrichedProduct[] = useMemo(() => {
     return investmentQueries.flatMap((q, index) => {
       const acc = validAccounts[index];
-      const data = (q.data as any[]) || [];
-      return data.map(inv => ({ ...inv, accountId: acc?.id, accountName: acc?.name }));
+      const prods = (q.data as ProductDashboardDTO[]) || [];
+      return prods.map(p => ({ ...p, accountId: acc?.id ?? "", accountName: acc?.name ?? "" }));
     });
   }, [investmentQueries, validAccounts]);
 
+  const productsWithoutBoxes = useMemo(
+    () => allProducts.filter(p => !p.boxes || p.boxes.length === 0),
+    [allProducts]
+  );
+
+
+  // EXTRAÇÃO DE CAIXINHAS
+  const allBoxes: EnrichedBox[] = useMemo(() => {
+    return allProducts.flatMap(prod =>
+      (prod.boxes || []).map((box) => ({
+        ...box,
+        productId: prod.id,
+        productName: prod.name,
+        displayRate: prod.displayRate,
+        tiers: prod.tiers || [],
+        type: prod.type,
+        indexer: prod.indexer,
+        convention: prod.convention,
+        accountId: prod.accountId,
+        accountName: prod.accountName,
+      }))
+    );
+  }, [allProducts]);
+
+
   // =======================================================================
-  // CONTROLE DE ESTADOS (Navegação em Profundidade)
+  // CONTROLES DE MODAIS
   // =======================================================================
-  const [selectedPapel, setSelectedPapel] = useState<any>(null);
-  const [selectedLote, setSelectedLote] = useState<any>(null);
-  
-  const [papelModalOpen, setPapelModalOpen] = useState(false);
-  const [loteModalOpen, setLoteModalOpen] = useState(false);
-  const [rescueModalOpen, setRescueModalOpen] = useState(false);
+  const [createProductModalOpen, setCreateProductModalOpen] = useState(false);
+  const [createBoxModalOpen, setCreateBoxModalOpen] = useState(false);
   const [apportModalOpen, setApportModalOpen] = useState(false);
 
-  const [apportTargetPapel, setApportTargetPapel] = useState<any>(null);
+  const [boxDashboardOpen, setBoxDashboardOpen] = useState(false);
+  const [loteDashboardOpen, setLoteDashboardOpen] = useState(false);
+  const [rescueModalOpen, setRescueModalOpen] = useState(false);
 
-  // Formulários
+  // Chave composta (productId + boxId) para identificar a caixinha de forma única
+  const [selectedBoxKey, setSelectedBoxKey] = useState<{ productId: string; boxId: string } | null>(null);
+  const [selectedLoteId, setSelectedLoteId] = useState<string | null>(null);
+
+  // Derivação do selectedBox usando chave composta
+  const selectedBox = useMemo(
+    () => allBoxes.find(
+      (b) => b.productId === selectedBoxKey?.productId && b.id === selectedBoxKey?.boxId
+    ) ?? null,
+    [allBoxes, selectedBoxKey]
+  );
+
+  const selectedLote = useMemo(
+    () => selectedBox?.activeLots.find((l: any) => l.id === selectedLoteId) ?? null,
+    [selectedBox, selectedLoteId]
+  );
+
+  // FORMS — Produto
   const [modalAccountId, setModalAccountId] = useState("");
-  const [name, setName] = useState("");
+  const [productName, setProductName] = useState("");
   const [type, setType] = useState("CDB");
   const [indexer, setIndexer] = useState("CDI");
-  const [contractedRate, setContractedRate] = useState("100");
+  const [convention, setConvention] = useState<YieldConvention>("CDI_EXPONENTIAL_252");
+  const [tiers, setTiers] = useState<TierFormRow[]>([
+    { minBalance: "0", maxBalance: "", rateMultiplier: "100", requiredMonthlyMovement: "" }
+  ]);
+
+  // FORMS — Caixinha
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [boxName, setBoxName] = useState("");
+
+  // FORMS — Aporte / Resgate
   const [amount, setAmount] = useState("");
-  const [maturityDate, setMaturityDate] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(todayIso());
   const [rescueAmount, setRescueAmount] = useState("");
 
-  // =======================================================================
-  // TOTALIZADORES GLOBAIS
-  // =======================================================================
-  const globalPrincipal = useMemo(() => allDashboards.reduce((acc, inv) => acc + inv.totalPrincipal, 0), [allDashboards]);
-  const globalBalance = useMemo(() => allDashboards.reduce((acc, inv) => acc + inv.totalProjectedNetBalance, 0), [allDashboards]);
-  const globalProfit = globalBalance - globalPrincipal;
+  // Helpers de Tiers
+  const addTier = () => setTiers([
+    ...tiers,
+    { minBalance: "", maxBalance: "", rateMultiplier: "100", requiredMonthlyMovement: "" }
+  ]);
 
-  const allocationByType = useMemo(() => {
-    const map = new Map<string, number>();
-    allDashboards.forEach((inv: any) => map.set(inv.type, (map.get(inv.type) || 0) + inv.totalProjectedNetBalance));
-    return Array.from(map.entries()).map(([name, value], index) => ({ name, value, fill: COLORS[index % COLORS.length] || '#10b981' }));
-  }, [allDashboards]);
+  const removeTier = (index: number) => setTiers(tiers.filter((_, i) => i !== index));
 
-  const allocationByIndexer = useMemo(() => {
-    const map = new Map<string, number>();
-    allDashboards.forEach((inv: any) => map.set(inv.indexer, (map.get(inv.indexer) || 0) + inv.totalProjectedNetBalance));
-    return Array.from(map.entries()).map(([name, value], index) => ({ name, value, fill: COLORS[(index + 2) % COLORS.length] || '#3b82f6' }));
-  }, [allDashboards]);
+  const updateTier = (
+    index: number,
+    field: keyof TierFormRow,
+    value: string
+  ) => {
+    const newTiers = [...tiers];
+    if (!newTiers[index]) return;
+    newTiers[index] = { ...newTiers[index], [field]: value };
+    setTiers(newTiers);
+  };
 
-  const performanceData = useMemo(() => {
-    return allDashboards.map((inv: any) => ({
-      name: inv.name,
-      Principal: inv.totalPrincipal,
-      Rentabilidade: inv.totalProjectedNetBalance - inv.totalPrincipal,
-    }));
-  }, [allDashboards]);
+  const resetProductForm = () => {
+    setProductName("");
+    setModalAccountId("");
+    setConvention("CDI_EXPONENTIAL_252");
+    setTiers([{ minBalance: "0", maxBalance: "", rateMultiplier: "100", requiredMonthlyMovement: "" }]);
+  };
 
   // =======================================================================
   // MUTAÇÕES
   // =======================================================================
+
+  // 1. Criar Produto
+  const productMutation = useMutation({
+    mutationFn: () => api.createProduct({
+      accountId: modalAccountId,
+      name: productName,
+      indexer,
+      type,
+      convention,
+      tiers: tiers.map<TierRequestDTO>(t => ({
+        minBalance: Number(t.minBalance || 0),
+        maxBalance: t.maxBalance ? Number(t.maxBalance) : null,
+        rateMultiplier: Number(t.rateMultiplier || 0),
+        requiredMonthlyMovement: t.requiredMonthlyMovement ? Number(t.requiredMonthlyMovement) : null,
+      }))
+    }),
+    onSuccess: () => {
+      refreshInvestmentData();
+      toast.success("Produto/Banco cadastrado!");
+      setCreateProductModalOpen(false);
+      resetProductForm();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // 2. Criar Caixinha
+  const boxMutation = useMutation({
+    mutationFn: () => api.createBox({
+      productId: selectedProductId,
+      name: boxName
+    }),
+    onSuccess: () => {
+      refreshInvestmentData();
+      toast.success("Objetivo criado com sucesso!");
+      setCreateBoxModalOpen(false);
+      setBoxName("");
+      setSelectedProductId("");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // 3. Aporte em Caixinha
   const apportMutation = useMutation({
     mutationFn: () => api.createApport({
-      accountId: apportTargetPapel ? apportTargetPapel.accountId : modalAccountId,
-      fixedIncomeId: apportTargetPapel ? apportTargetPapel.id : undefined,
-      type: apportTargetPapel ? undefined : type,
-      name: apportTargetPapel ? undefined : name,
-      indexer: apportTargetPapel ? undefined : indexer,
-      contractedRate: apportTargetPapel ? undefined : Number(contractedRate),
-      maturityDate: apportTargetPapel ? undefined : (maturityDate || null),
+      accountId: modalAccountId,
+      boxId: selectedBox?.id ?? "",
       amount: Number(amount),
       purchaseDate
     }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["investments"] });
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      toast.success("Aporte realizado com sucesso!");
+      refreshInvestmentData();
+      toast.success("Aporte realizado!");
       setApportModalOpen(false);
-      setName(""); setAmount(""); setMaturityDate(""); setModalAccountId("");
-      
-      if (papelModalOpen && apportTargetPapel) {
-        setPapelModalOpen(false);
-      }
+      setAmount("");
+      setModalAccountId("");
     },
     onError: (err: any) => toast.error(err.message),
   });
 
+  // 4. Resgate
   const rescueMutation = useMutation({
     mutationFn: () => api.executeRescue({
-      fixedIncomeId: selectedPapel?.id,
-      rescueAmount: Number(rescueAmount),
-      rescueDate: todayIso()
+      boxId: selectedBox?.id ?? "",
+      requestedAmount: Number(rescueAmount)
     }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["investments"] });
-      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      toast.success("Resgate solicitado com sucesso!");
+      refreshInvestmentData();
+      toast.success("Resgate processado com sucesso!");
       setRescueModalOpen(false);
-      setPapelModalOpen(false);
+      setBoxDashboardOpen(false);
       setRescueAmount("");
+      setSelectedBoxKey(null);
+      setSelectedLoteId(null);
     },
     onError: (err: any) => toast.error(err.message),
   });
 
-  // =======================================================================
-  // FUNÇÕES DE NAVEGAÇÃO
-  // =======================================================================
-  const openNewPapelModal = () => {
-    setApportTargetPapel(null);
+  const openApportModal = () => {
+    if (!selectedBox) return;
+    setModalAccountId(selectedBox.accountId);
     setApportModalOpen(true);
   };
 
-  const openApportToExistingPapel = (papel: any) => {
-    setApportTargetPapel(papel);
-    setApportModalOpen(true);
-  };
+  // =======================================================================
+  // TOTALIZADORES
+  // =======================================================================
+  const globalPrincipal = useMemo(() => allBoxes.reduce((acc, box) => acc + box.totalPrincipal, 0), [allBoxes]);
+  const globalBalance = useMemo(() => allBoxes.reduce((acc, box) => acc + box.totalNetBalance, 0), [allBoxes]);
+  const globalProfit = globalBalance - globalPrincipal;
 
-  const openPapelDashboard = (papel: any) => {
-    setSelectedPapel(papel);
-    setPapelModalOpen(true);
-  };
+  const allocationByType = useMemo(() => {
+    const map = new Map<string, number>();
+    allBoxes.forEach((box) => map.set(box.type, (map.get(box.type) || 0) + box.totalNetBalance));
+    return Array.from(map.entries()).map(([name, value], index) => ({ name, value, fill: COLORS[index % COLORS.length] || '#10b981' }));
+  }, [allBoxes]);
 
-  const openLoteDashboard = (lote: any) => {
-    setSelectedLote(lote);
-    setLoteModalOpen(true);
-  };
+  const allocationByIndexer = useMemo(() => {
+    const map = new Map<string, number>();
+    allBoxes.forEach((box) => map.set(box.indexer, (map.get(box.indexer) || 0) + box.totalNetBalance));
+    return Array.from(map.entries()).map(([name, value], index) => ({ name, value, fill: COLORS[(index + 2) % COLORS.length] || '#3b82f6' }));
+  }, [allBoxes]);
+
+  const performanceData = useMemo(() => {
+    return allBoxes.map((box) => ({
+      name: box.name,
+      Principal: box.totalPrincipal,
+      Rentabilidade: box.totalNetBalance - box.totalPrincipal,
+    }));
+  }, [allBoxes]);
 
   return (
     <div className="space-y-6 pb-12">
-      <PageHeader 
-        title="Gestão de Patrimônio" 
-        description="Visão consolidada de todos os seus investimentos."
+      <PageHeader
+        title="Gestão de Patrimônio"
+        description="Acompanhe seus rendimentos e organize seu capital em objetivos."
         action={
-          <Button className="rounded-full bg-primary" onClick={openNewPapelModal}>
-            <Plus className="mr-2 size-4" /> Novo Investimento
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setCreateProductModalOpen(true)}>
+              <Landmark className="mr-2 size-4" /> Novo Produto
+            </Button>
+            <Button className="bg-primary text-primary-foreground" onClick={() => setCreateBoxModalOpen(true)}>
+              <Target className="mr-2 size-4" /> Nova Meta
+            </Button>
+          </div>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <SummaryCard label="Total Investido" value={formatMoney(globalPrincipal)} icon={<Landmark className="size-5" />} />
+        <SummaryCard label="Total Investido" value={formatMoney(globalPrincipal)} icon={<Wallet className="size-5" />} />
         <SummaryCard label="Saldo Líquido Atual" value={formatMoney(globalBalance)} tone="inflow" icon={<PiggyBank className="size-5" />} />
         <SummaryCard label="Lucro Acumulado" value={formatMoney(globalProfit)} tone="inflow" icon={<TrendingUp className="size-5" />} />
       </div>
 
-      {allDashboards.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 mb-8">
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-muted-foreground mb-4">Composição por Ativo</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={allocationByType} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} />
-                  <RechartsTooltip formatter={(val: any) => formatMoney(Number(val || 0))} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Legend height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-muted-foreground mb-4">Exposição por Indexador</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={allocationByIndexer} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} />
-                  <RechartsTooltip formatter={(val: any) => formatMoney(Number(val || 0))} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Legend height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border bg-card p-5 shadow-sm md:col-span-2 xl:col-span-1">
-            <h3 className="text-sm font-bold text-muted-foreground mb-4">Rentabilidade por Papel</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={performanceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis 
-                    dataKey="name" 
-                    tickLine={false} 
-                    axisLine={false} 
-                    fontSize={10} 
-                    tickFormatter={(val: string) => val?.length > 12 ? val.substring(0, 12) + '...' : val} 
-                  />
-                  <YAxis 
-                    tickLine={false} 
-                    axisLine={false} 
-                    fontSize={10} 
-                    tickFormatter={(val: number) => Number(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact' })} 
-                  />
-                  <RechartsTooltip formatter={(val: any) => formatMoney(Number(val || 0))} cursor={{ fill: 'var(--muted)' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Legend height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                  <Bar dataKey="Principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
-                  <Bar dataKey="Rentabilidade" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* LISTAGEM DE PAPÉIS */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {/* LISTAGEM DE PRODUTOS (cada um contendo suas caixinhas) */}
+      <div className="space-y-6">
         {isLoading ? (
-          <div className="col-span-full py-8 text-center text-muted-foreground">Consolidando carteira de investimentos...</div>
-        ) : allDashboards.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-muted-foreground border-2 border-dashed rounded-xl bg-muted/5">
-            Você ainda não possui investimentos registrados.
+          <div className="py-8 text-center text-muted-foreground">Consolidando carteira de investimentos...</div>
+        ) : allProducts.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground border-2 border-dashed rounded-xl bg-muted/5">
+            Você ainda não possui produtos cadastrados.
           </div>
         ) : (
-          allDashboards.map((inv: any) => (
-            <article 
-              key={inv.id} 
-              className="rounded-2xl border bg-card p-5 shadow-sm hover:border-primary/50 transition-colors flex flex-col relative overflow-hidden cursor-pointer"
-              onClick={() => openPapelDashboard(inv)}
-            >
-              <div className="absolute top-0 left-0 w-1 h-full bg-primary/80" />
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="secondary" className="text-[10px]">{inv.type}</Badge>
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{inv.accountName}</span>
+          allProducts.map((prod) => (
+            <div key={prod.id} className="rounded-2xl border bg-card shadow-sm overflow-hidden">
+              {/* CABEÇALHO DO PRODUTO */}
+              <div className="p-5 bg-muted/20 border-b flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <Landmark className="size-5 text-primary" />
                   </div>
-                  <h3 className="font-bold text-lg leading-tight group-hover:text-primary">{inv.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-1">Rentabilidade: {inv.contractedRate}% do {inv.indexer}</p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base">{prod.name}</h3>
+                      <Badge variant="secondary" className="text-[10px]">{prod.type}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {prod.accountName} · {formatTierDisplay(prod.tiers, prod.indexer, prod.displayRate)}
+                      {prod.convention && ` · ${CONVENTION_LABELS[prod.convention]}`}
+                    </p>
+                  </div>
                 </div>
-                <Badge variant="outline" className="bg-inflow/10 text-inflow border-none">Ativo</Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedProductId(prod.id);
+                    setCreateBoxModalOpen(true);
+                  }}
+                >
+                  <Plus className="size-4 mr-2" /> Nova Meta
+                </Button>
               </div>
-              
-              <div className="mt-6 space-y-2 mb-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Total Investido</span>
-                  <span className="font-medium">{formatMoney(inv.totalPrincipal)}</span>
-                </div>
-                <div className="flex justify-between text-base pt-2 border-t mt-2">
-                  <span className="font-semibold">Saldo Atual</span>
-                  <span className="font-bold text-primary">{formatMoney(inv.totalProjectedNetBalance)}</span>
-                </div>
+
+              {/* CAIXINHAS DENTRO DO PRODUTO */}
+              <div className="p-5">
+                {(prod.boxes || []).length === 0 ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground border-2 border-dashed rounded-xl bg-muted/5">
+                    Nenhuma meta criada neste produto ainda.
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {prod.boxes.map((box) => {
+                      return (
+                        <article
+                          key={box.id}
+                          className="rounded-xl border bg-background p-4 shadow-sm hover:border-primary/50 transition-colors flex flex-col relative overflow-hidden cursor-pointer"
+                          onClick={() => {
+                            setSelectedBoxKey({ productId: prod.id, boxId: box.id });
+                            setSelectedLoteId(null);
+                            setBoxDashboardOpen(true);
+                          }}
+                        >
+                          <div className="absolute top-0 left-0 w-1 h-full bg-primary/80" />
+                          <div className="flex justify-between items-start">
+                            <h4 className="font-bold text-sm leading-tight">{box.name}</h4>
+                            <Badge variant="outline" className="bg-inflow/10 text-inflow border-none text-[10px]">Ativa</Badge>
+                          </div>
+
+                          <div className="mt-4 space-y-1.5">
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">Aportado</span>
+                              <span className="font-medium">{formatMoney(box.totalPrincipal)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm pt-1.5 border-t mt-1.5">
+                              <span className="font-semibold">Saldo Atual</span>
+                              <span className="font-bold text-primary">{formatMoney(box.totalNetBalance)}</span>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </article>
+            </div>
           ))
         )}
       </div>
 
-      {/* 1. MODAL DO PAPEL (DASHBOARD DO CONTRATO + LOTES) */}
-      <Dialog open={papelModalOpen} onOpenChange={setPapelModalOpen}>
-        <DialogContent className="sm:max-w-4xl p-0 overflow-hidden max-h-[85vh] flex flex-col">
+
+      {/* ============================================================================== */}
+      {/* MODAL 1: CRIAR PRODUTO */}
+      {/* ============================================================================== */}
+      <Dialog open={createProductModalOpen} onOpenChange={setCreateProductModalOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Registrar Novo Produto</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2 max-h-[65vh] overflow-y-auto pr-1">
+            <div className="space-y-2">
+              <Label>Conta de Custódia (Onde o produto reside)</Label>
+              <Select value={modalAccountId} onValueChange={setModalAccountId}>
+                <SelectTrigger><SelectValue placeholder="Selecione a instituição..." /></SelectTrigger>
+                <SelectContent>
+                  {validAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Nome do Produto</Label>
+              <Input placeholder="Ex: CDB Nubank, Cofrinho PicPay..." value={productName} onChange={(e) => setProductName(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Tipo do Papel</Label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CDB">CDB</SelectItem>
+                    <SelectItem value="LCI">LCI (Isento)</SelectItem>
+                    <SelectItem value="LCA">LCA (Isento)</SelectItem>
+                    <SelectItem value="RDB">RDB</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Indexador</Label>
+                <Select value={indexer} onValueChange={setIndexer}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CDI">CDI</SelectItem>
+                    <SelectItem value="IPCA">IPCA</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Convenção de Rendimento</Label>
+              <Select value={convention} onValueChange={(v) => setConvention(v as YieldConvention)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CDI_EXPONENTIAL_252">CDI Exponencial (dias úteis) — CDB, LCI, LCA</SelectItem>
+                  <SelectItem value="SAVINGS_MONTHLY_ANNIVERSARY">Poupança (aniversário mensal)</SelectItem>
+                  <SelectItem value="IPCA_MONTHLY">IPCA + juros (crédito mensal)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                Define como o rendimento diário é calculado e em qual data é creditado.
+              </p>
+            </div>
+
+            {/* Tiers */}
+            <div className="space-y-3 border rounded-xl p-4 bg-muted/10 mt-2">
+              <div className="flex items-center justify-between">
+                <Label className="font-semibold text-primary">Faixas de Rendimento (Tiers)</Label>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-[10px]" onClick={addTier}>
+                  <Plus className="size-3 mr-1" /> Adicionar Faixa
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {tiers.map((tier, index) => (
+                  <div key={index} className="space-y-2 border-b pb-3 last:border-b-0 last:pb-0">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Saldo Min. (R$)</Label>
+                        <Input type="number" placeholder="0.00" value={tier.minBalance} onChange={(e) => updateTier(index, "minBalance", e.target.value)} />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Saldo Máx. (R$)</Label>
+                        <Input type="number" placeholder="Ilimitado" value={tier.maxBalance} onChange={(e) => updateTier(index, "maxBalance", e.target.value)} />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">% do {indexer}</Label>
+                        <Input type="number" value={tier.rateMultiplier} onChange={(e) => updateTier(index, "rateMultiplier", e.target.value)} />
+                      </div>
+                      {tiers.length > 1 && (
+                        <Button type="button" variant="ghost" size="icon" className="mb-[2px] text-destructive hover:bg-destructive/10" onClick={() => removeTier(index)}>
+                          <Trash2 className="size-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">
+                        Movimentação mínima mensal p/ esta faixa (opcional)
+                      </Label>
+                      <Input
+                        type="number"
+                        placeholder="Ex: 1000.00 (deixe vazio se não houver exigência)"
+                        value={tier.requiredMonthlyMovement}
+                        onChange={(e) => updateTier(index, "requiredMonthlyMovement", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateProductModalOpen(false)}>Cancelar</Button>
+            <Button disabled={!modalAccountId || !productName || tiers.some(t => !t.rateMultiplier) || productMutation.isPending} onClick={() => productMutation.mutate()}>
+              Salvar Produto
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================================================== */}
+      {/* MODAL 2: CRIAR CAIXINHA */}
+      {/* ============================================================================== */}
+      <Dialog open={createBoxModalOpen} onOpenChange={setCreateBoxModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Criar Nova Meta / Objetivo</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label>Produto Base</Label>
+              <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+                <SelectTrigger><SelectValue placeholder="Selecione onde a meta será alocada..." /></SelectTrigger>
+                <SelectContent>
+                  {allProducts.length === 0 ? (
+                    <SelectItem value="none" disabled>Nenhum produto cadastrado</SelectItem>
+                  ) : (
+                    allProducts.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.accountName})</SelectItem>)
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Nome do Objetivo</Label>
+              <Input placeholder="Ex: Viagem, IPVA, Casamento..." value={boxName} onChange={(e) => setBoxName(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateBoxModalOpen(false)}>Cancelar</Button>
+            <Button disabled={!selectedProductId || !boxName || boxMutation.isPending} onClick={() => boxMutation.mutate()}>
+              Criar Objetivo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================================================== */}
+      {/* MODAL 3: APORTAR CAPITAL */}
+      {/* ============================================================================== */}
+      <Dialog open={apportModalOpen} onOpenChange={setApportModalOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Aportar na Meta: {selectedBox?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="bg-muted/30 p-3 rounded-lg border text-sm text-muted-foreground mb-2">
+              Destino: Produto <strong>{selectedBox?.productName}</strong>.
+              Regra: {formatTierDisplay(selectedBox?.tiers || [], selectedBox?.indexer || "")}.
+            </div>
+
+            <div className="space-y-2">
+              <Label>Débito na Conta Corrente</Label>
+              <Select value={modalAccountId} onValueChange={setModalAccountId}>
+                <SelectTrigger><SelectValue placeholder="Selecione a origem do dinheiro..." /></SelectTrigger>
+                <SelectContent>
+                  {validAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Valor do Aporte (R$)</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Data da Aplicação</Label>
+              <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setApportModalOpen(false)}>Cancelar</Button>
+            <Button disabled={!modalAccountId || !amount || apportMutation.isPending} onClick={() => apportMutation.mutate()}>
+              Confirmar Aporte
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DASHBOARD DA CAIXINHA */}
+      <Dialog open={boxDashboardOpen} onOpenChange={setBoxDashboardOpen}>
+        <DialogContent
+          key={`${selectedBoxKey?.productId}-${selectedBoxKey?.boxId}`}
+          className="sm:max-w-4xl p-0 overflow-hidden max-h-[85vh] flex flex-col"
+        >
           <DialogHeader className="p-6 pb-4 border-b bg-muted/30 shrink-0">
             <div className="flex justify-between items-start">
               <DialogTitle className="flex flex-col gap-1">
-                <span className="text-2xl">{selectedPapel?.name}</span>
+                <span className="text-2xl">{selectedBox?.name}</span>
                 <span className="text-sm font-normal text-muted-foreground">
-                  {selectedPapel?.type} · {selectedPapel?.contractedRate}% do {selectedPapel?.indexer} · Conta: {selectedPapel?.accountName}
+                  {selectedBox?.productName} · {selectedBox?.type} · {formatTierDisplay(selectedBox?.tiers, selectedBox?.indexer ?? "", selectedBox?.displayRate)} · Conta: {selectedBox?.accountName}
                 </span>
+                {selectedBox?.convention && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Convenção: {CONVENTION_LABELS[selectedBox.convention]}
+                  </span>
+                )}
               </DialogTitle>
               <div className="flex gap-2">
-                <Button variant="secondary" size="sm" className="bg-primary/10 text-primary hover:bg-primary/20" onClick={() => openApportToExistingPapel(selectedPapel)}>
+                <Button variant="secondary" size="sm" className="bg-primary/10 text-primary hover:bg-primary/20" onClick={openApportModal}>
                   <Plus className="size-4 mr-2" /> Novo Aporte
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setRescueModalOpen(true)}>
@@ -315,31 +650,54 @@ function InvestmentsPage() {
             </div>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto bg-background p-6">
+
+            {selectedBox?.tiers && selectedBox.tiers.length > 1 && (
+              <div className="mb-6 p-4 rounded-xl border border-primary/20 bg-primary/5 flex items-start gap-3">
+                <Info className="size-5 text-primary shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-2">Regra de Rendimento do Produto</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {[...selectedBox.tiers].sort((a, b) => a.minBalance - b.minBalance).map((tier, i) => (
+                      <Badge key={i} variant="outline" className="bg-background font-medium">
+                        {tier.maxBalance ? `Até ${formatMoney(tier.maxBalance)}` : `Acima de ${formatMoney(tier.minBalance)}`}
+                        <span className="ml-1.5 text-primary">rende {tier.rateMultiplier}%</span>
+                        {tier.requiredMonthlyMovement && (
+                          <span className="ml-1.5 text-[10px] text-muted-foreground">
+                            (requer {formatMoney(tier.requiredMonthlyMovement)}/mês)
+                          </span>
+                        )}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Total Aportado</p>
-                <p className="text-lg font-bold">{formatMoney(selectedPapel?.totalPrincipal)}</p>
+                <p className="text-lg font-bold">{formatMoney(selectedBox?.totalPrincipal ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Saldo Bruto</p>
-                <p className="text-lg font-bold">{formatMoney(selectedPapel?.totalProjectedGrossBalance)}</p>
+                <p className="text-lg font-bold">{formatMoney(selectedBox?.totalGrossBalance ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Impostos Retidos</p>
-                <p className="text-lg font-bold text-destructive">-{formatMoney(selectedPapel?.totalProjectedTaxes)}</p>
+                <p className="text-lg font-bold text-destructive">-{formatMoney(selectedBox?.totalTaxes ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-inflow/10 border-inflow/20">
                 <p className="text-xs text-inflow mb-1">Saldo Líquido</p>
-                <p className="text-lg font-bold text-inflow">{formatMoney(selectedPapel?.totalProjectedNetBalance)}</p>
+                <p className="text-lg font-bold text-inflow">{formatMoney(selectedBox?.totalNetBalance ?? 0)}</p>
               </div>
             </div>
 
-            <h3 className="font-bold text-lg mb-4">Aportes (Lotes)</h3>
+            <h3 className="font-bold text-lg mb-4">Aportes (Lotes FIFO)</h3>
             <div className="border rounded-xl overflow-hidden shadow-sm">
               <Table>
                 <TableHeader className="bg-muted/30">
                   <TableRow>
-                    <TableHead>Data do Aporte</TableHead>
+                    <TableHead>Data</TableHead>
                     <TableHead>Idade</TableHead>
                     <TableHead className="text-right">Aportado</TableHead>
                     <TableHead className="text-right">Rendimento</TableHead>
@@ -348,21 +706,19 @@ function InvestmentsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(selectedPapel?.activeLots || []).map((lot: any) => (
-                    <TableRow key={lot.id} className="cursor-pointer hover:bg-muted/10 transition-colors" onClick={() => openLoteDashboard(lot)}>
+                  {(selectedBox?.activeLots || []).map((lot) => (
+                    <TableRow key={lot.id} className="cursor-pointer hover:bg-muted/10 transition-colors" onClick={() => { setSelectedLoteId(lot.id); setLoteDashboardOpen(true); }}>
                       <TableCell className="font-medium">{format(parseLocalDate(lot.purchaseDate), "dd/MM/yyyy")}</TableCell>
                       <TableCell>{lot.ageInDays} dias</TableCell>
                       <TableCell className="text-right">{formatMoney(lot.remainingPrincipal)}</TableCell>
                       <TableCell className="text-right text-inflow">+{formatMoney(lot.projectedNetBalance - lot.remainingPrincipal)}</TableCell>
                       <TableCell className="text-right font-bold">{formatMoney(lot.projectedNetBalance)}</TableCell>
                       <TableCell className="text-center">
-                        <Button variant="ghost" size="sm" className="h-8 rounded-lg text-primary">
-                          <Search className="size-4 mr-1" /> Extrato
-                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 rounded-lg text-primary"><Search className="size-4 mr-1" /> Extrato</Button>
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(selectedPapel?.activeLots || []).length === 0 && (
+                  {(selectedBox?.activeLots || []).length === 0 && (
                     <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">Nenhum aporte ativo.</TableCell></TableRow>
                   )}
                 </TableBody>
@@ -372,12 +728,15 @@ function InvestmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 2. MODAL DO LOTE (DASHBOARD DO LOTE + TRANSAÇÕES) */}
-      <Dialog open={loteModalOpen} onOpenChange={setLoteModalOpen}>
-        <DialogContent className="sm:max-w-4xl p-0 overflow-hidden max-h-[85vh] flex flex-col">
+      {/* DASHBOARD DO LOTE (Extrato) */}
+      <Dialog open={loteDashboardOpen} onOpenChange={setLoteDashboardOpen}>
+        <DialogContent
+          key={selectedLoteId ?? "no-lote"}
+          className="sm:max-w-4xl p-0 overflow-hidden max-h-[85vh] flex flex-col"
+        >
           <DialogHeader className="p-6 pb-4 border-b bg-muted/30 shrink-0">
             <DialogTitle className="flex items-center justify-between">
-              <span>Extrato da Tranche</span>
+              <span>Extrato da Tranche (Fatia do Lote)</span>
               <Badge variant="outline" className="font-mono">{selectedLote?.ageInDays} dias rendendo</Badge>
             </DialogTitle>
           </DialogHeader>
@@ -385,20 +744,20 @@ function InvestmentsPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Aporte Original</p>
-                <p className="text-lg font-bold">{formatMoney(selectedLote?.remainingPrincipal)}</p>
+                <p className="text-lg font-bold">{formatMoney(selectedLote?.remainingPrincipal ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Saldo Bruto</p>
-                <p className="text-lg font-bold">{formatMoney(selectedLote?.projectedGrossBalance)}</p>
+                <p className="text-lg font-bold">{formatMoney(selectedLote?.projectedGrossBalance ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-card">
                 <p className="text-xs text-muted-foreground mb-1">Impostos Acumulados</p>
-                <p className="text-sm font-bold text-destructive">IR: {formatMoney(selectedLote?.currentIrTaxProvision)}</p>
-                <p className="text-sm font-bold text-destructive">IOF: {formatMoney(selectedLote?.currentIofTaxProvision)}</p>
+                <p className="text-sm font-bold text-destructive">IR: {formatMoney(selectedLote?.currentIrTaxProvision ?? 0)}</p>
+                <p className="text-sm font-bold text-destructive">IOF: {formatMoney(selectedLote?.currentIofTaxProvision ?? 0)}</p>
               </div>
               <div className="p-4 border rounded-xl bg-inflow/10 border-inflow/20">
                 <p className="text-xs text-inflow mb-1">Saldo Líquido</p>
-                <p className="text-lg font-bold text-inflow">{formatMoney(selectedLote?.projectedNetBalance)}</p>
+                <p className="text-lg font-bold text-inflow">{formatMoney(selectedLote?.projectedNetBalance ?? 0)}</p>
               </div>
             </div>
 
@@ -415,7 +774,7 @@ function InvestmentsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(selectedLote?.transactions || []).map((tx: any) => {
+                  {(selectedLote?.transactions || []).map((tx) => {
                     const isApport = tx.type === "APPORT";
                     const isRescue = tx.type === "RESCUE";
                     return (
@@ -446,100 +805,7 @@ function InvestmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ============================================================================== */}
-      {/* MODAL UNIVERSAL DE APORTE (Controla Novo Papel vs Adição de Lote) */}
-      {/* ============================================================================== */}
-      <Dialog open={apportModalOpen} onOpenChange={setApportModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{apportTargetPapel ? `Novo Aporte em ${apportTargetPapel.name}` : "Novo Investimento de Capital"}</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-2">
-            
-            {!apportTargetPapel && (
-              <>
-                <div className="space-y-2">
-                  <Label>Conta de Origem (Custódia)</Label>
-                  <Select value={modalAccountId} onValueChange={setModalAccountId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione de onde o dinheiro vai sair..." /></SelectTrigger>
-                    <SelectContent>
-                      {validAccounts.map((a: any) => (
-                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Nome do Investimento</Label>
-                  <Input placeholder="Ex: CDB Banco Inter..." value={name} onChange={(e) => setName(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Tipo do Papel</Label>
-                    <Select value={type} onValueChange={setType}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="CDB">CDB</SelectItem>
-                        <SelectItem value="LCI">LCI (Isento)</SelectItem>
-                        <SelectItem value="LCA">LCA (Isento)</SelectItem>
-                        <SelectItem value="RDB">RDB</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Indexador</Label>
-                    <Select value={indexer} onValueChange={setIndexer}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="CDI">CDI</SelectItem>
-                        <SelectItem value="IPCA">IPCA</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Taxa Contratada (%)</Label>
-                    <Input type="number" value={contractedRate} onChange={(e) => setContractedRate(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Vencimento (Opcional)</Label>
-                    <Input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {apportTargetPapel && (
-              <div className="bg-muted/30 p-3 rounded-lg border text-sm text-muted-foreground mb-2">
-                Este aporte será mantido sob as regras vigentes do contrato ({apportTargetPapel.contractedRate}% do {apportTargetPapel.indexer}) e debitado na conta {apportTargetPapel.accountName}.
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4 border-t pt-4">
-              <div className="space-y-2">
-                <Label>Valor do Aporte (R$)</Label>
-                <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Data da Aplicação</Label>
-                <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setApportModalOpen(false)}>Cancelar</Button>
-            <Button 
-              disabled={(!apportTargetPapel && (!modalAccountId || !name)) || !amount || apportMutation.isPending} 
-              onClick={() => apportMutation.mutate()}
-            >
-              Confirmar Aplicação
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL DE RESGATE DE PAPEL */}
+      {/* MODAL DE RESGATE */}
       <Dialog open={rescueModalOpen} onOpenChange={setRescueModalOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -548,20 +814,19 @@ function InvestmentsPage() {
           <div className="space-y-4 py-4">
             <div className="bg-muted/30 p-3 rounded-lg flex justify-between items-center text-sm border">
               <span className="text-muted-foreground">Saldo Disponível:</span>
-              <span className="font-bold text-primary">{formatMoney(selectedPapel?.totalProjectedNetBalance || 0)}</span>
+              <span className="font-bold text-primary">{formatMoney(selectedBox?.totalNetBalance || 0)}</span>
             </div>
             <div className="space-y-2">
               <Label>Valor a Resgatar (R$)</Label>
               <Input type="number" step="0.01" value={rescueAmount} onChange={(e) => setRescueAmount(e.target.value)} />
               <p className="text-[10px] text-muted-foreground mt-1">
-                O crédito será feito na conta <strong>{selectedPapel?.accountName}</strong>. 
-                O sistema utilizará a regra PEPS (Primeiro a Entrar, Primeiro a Sair).
+                O crédito será feito na conta <strong>{selectedBox?.accountName}</strong>.
               </p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setRescueModalOpen(false)}>Cancelar</Button>
-            <Button variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20" disabled={!rescueAmount || Number(rescueAmount) > (selectedPapel?.totalProjectedNetBalance || 0) || rescueMutation.isPending} onClick={() => rescueMutation.mutate()}>
+            <Button variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20" disabled={!rescueAmount || Number(rescueAmount) > (selectedBox?.totalNetBalance || 0) || rescueMutation.isPending} onClick={() => rescueMutation.mutate()}>
               Efetuar Resgate
             </Button>
           </DialogFooter>

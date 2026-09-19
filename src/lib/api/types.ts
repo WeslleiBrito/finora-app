@@ -1,3 +1,118 @@
+// Adicionar estes tipos/interfaces:
+
+export type YieldConvention =
+  | "CDI_EXPONENTIAL_252"
+  | "SAVINGS_MONTHLY_ANNIVERSARY"
+  | "IPCA_MONTHLY";
+
+export interface TierRequestDTO {
+  minBalance: number;
+  maxBalance: number | null;
+  rateMultiplier: number;
+  requiredMonthlyMovement?: number | null;
+}
+
+export interface TierResponseDTO {
+  id: string;
+  minBalance: number;
+  maxBalance: number | null;
+  rateMultiplier: number;
+  requiredMonthlyMovement: number | null;
+}
+
+export interface CreateProductDTO {
+  accountId: string;
+  name: string;
+  indexer: string;
+  type: string;
+  convention: YieldConvention;
+  tiers: TierRequestDTO[];
+}
+
+export interface CreateBoxDTO {
+  productId: string;
+  name: string;
+}
+
+// Ajustar ProductDashboardDTO para incluir convention e tiers:
+export interface ProductDashboardDTO {
+  id: string;
+  name: string;
+  type: string;
+  indexer: string;
+  convention: YieldConvention;
+  displayRate: number;
+  status: string;
+  totalProductBalance: number;
+  tiers: TierResponseDTO[];
+  boxes: BoxDetailDTO[];
+}
+
+export interface LotDetailDTO {
+  id: string;
+  purchaseDate: string;
+  ageInDays: number;
+  remainingPrincipal: number;
+  projectedGrossBalance: number;
+  projectedNetBalance: number;
+  currentIrTaxProvision: number;
+  currentIofTaxProvision: number;
+  transactions: InvestmentTransactionResponseDTO[];
+}
+
+export interface InvestmentTransactionResponseDTO {
+  id: string;
+  type: "APPORT" | "RESCUE" | "DAILY_YIELD";
+  referenceDate: string;
+  description: string;
+  grossAmount: number;
+  netAmount: number;
+  irTaxRetained: number;
+  iofTaxRetained: number;
+  appliedMarketRate?: number;
+}
+
+export interface BoxDetailDTO {
+  id: string;
+  name: string;
+  totalPrincipal: number;
+  totalGrossBalance: number;
+  totalTaxes: number;
+  totalNetBalance: number;
+  activeLots: LotDetailDTO[];
+}
+
+// Ajustar InvestmentApportDTO (payload de envio, sem os campos de exibição):
+export interface CreateApportDTO {
+  accountId: string;
+  boxId: string;
+  amount: number;
+  purchaseDate: string;
+}
+
+export interface InvestmentApportDTO {
+  accountId: string;
+  productId?: string;
+  boxId?: string;
+  productName?: string;
+  boxName?: string;
+  indexer?: string;
+  type?: string;
+  tiers?: Array<{
+    minBalance: number;
+    maxBalance: number | null;
+    rateMultiplier: number;
+  }>;
+  amount: number;
+  purchaseDate: string;
+}
+
+export interface InvestmentRescueDTO {
+  boxId: string;
+  requestedAmount: number;
+}
+
+
 // Tipagem para os detalhes de ordenação
 export interface Sort {
   empty: boolean;
@@ -394,18 +509,3 @@ export interface InvestmentTransactionDTO {
   description: string;
 }
 
-export interface FixedIncomeDashboardDTO {
-  id: string;
-  name: string;
-  type: string;
-  indexer: string;
-  contractedRate: number;
-  status: string;
-  accountId: string;
-  accountName: string;
-  totalPrincipal: number;
-  netBalance: number;
-  totalProfit: number;
-  maturityDate: string;
-  history: InvestmentTransactionDTO[];
-}

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
-
+import { operationTypesQuery } from "@/lib/api/queries";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ export function OperationTypeDialog({ open, onOpenChange, onSuccess, defaultDire
       operationGroupId
     }),
     onSuccess: (response: any) => {
-      void queryClient.invalidateQueries({ queryKey: ["operationTypes"] });
+      void queryClient.invalidateQueries({ queryKey: operationTypesQuery.queryKey });
       toast.success("Categoria criada!");
       onSuccess?.(response?.id);
       onOpenChange(false);

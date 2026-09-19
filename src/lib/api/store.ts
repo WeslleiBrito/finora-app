@@ -10,9 +10,9 @@ import type {
   CreditCardDetailsDTO,
   CreditCardSummaryDTO,
   DashboardSummaryDTO,
-  FixedIncomeDashboardDTO,
   InstallmentDTO,
   InstallmentSummaryDTO,
+  InvestmentRescueDTO,
   InvoiceResponseDTO,
   MovementType,
   OperationGroupResponseDTO,
@@ -20,6 +20,10 @@ import type {
   PageResponse,
   PersonCreateLegalRequestDTO,
   PersonCreatePhysicalRequestDTO,
+  CreateProductDTO,
+  CreateBoxDTO,
+  ProductDashboardDTO,
+  CreateApportDTO,
   PersonResponseDTO,
   ReversalRequestDTO,
   TransactionResponseDTO,
@@ -27,7 +31,7 @@ import type {
 } from "./types";
 
 // URL base da sua API (ajuste se mudar o túnel do Cloudflare)
-const API_BASE_URL = "http://localhost:8080/api";
+const API_BASE_URL = "/api";
 
 /**
  * Função centralizada para fazer requisições à API.
@@ -55,12 +59,12 @@ async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise
     try {
       const errorData = await response.json();
       if (errorData.message) errorMessage = errorData.message;
-    } catch (_) {}
+    } catch (_) { }
     throw new Error(errorMessage);
   }
 
   if (response.status === 204) return {} as T;
-  
+
   return response.json();
 }
 
@@ -127,26 +131,26 @@ export const api = {
     });
     return fetchApi<InstallmentSummaryDTO>(`/installments/summary?${query.toString()}`);
   },
-  
+
   // ==========================================
   // DASHBOARD
   // ==========================================
   async getDashboardSummary(): Promise<DashboardSummaryDTO> {
     return fetchApi<DashboardSummaryDTO>("/dashboard/summary");
   },
-  
+
   // ==========================================
   // CONTAS
   // ==========================================
   async listAccounts(): Promise<AccountResponseDTO[]> {
     const response = await fetchApi<PageResponse<AccountResponseDTO>>("/account");
     // Se o Spring não devolver o objeto com content (ex: erro 500 ignorado), devolvemos um array vazio para não quebrar o .filter()
-    return response.content || []; 
+    return response.content || [];
   },
 
   async createAccount(input: any) {
-    const kindEndpoint = input.kind.toLowerCase(); 
-    
+    const kindEndpoint = input.kind.toLowerCase();
+
     // 🌟 CORREÇÃO: Se for WALLET, mandamos os dados diretamente na raiz
     if (input.kind === "WALLET") {
       return fetchApi<AccountResponseDTO>(`/account/create/${kindEndpoint}`, {
@@ -202,7 +206,7 @@ export const api = {
   // ==========================================
   async listInvoices(): Promise<InvoiceResponseDTO[]> {
     const response = await fetchApi<PageResponse<InvoiceResponseDTO>>("/invoice");
-    return response.content || []; 
+    return response.content || [];
   },
 
   async getInvoice(id: UUID) {
@@ -230,7 +234,7 @@ export const api = {
     return response.content
   },
 
-  async createTransaction(input: {transactions: Array<CreateTransactionDTO>}) {
+  async createTransaction(input: { transactions: Array<CreateTransactionDTO> }) {
     // O backend retorna uma List<TransactionResponseDTO>, então pegamos a primeira
     const responses = await fetchApi<TransactionResponseDTO[]>("/transactions/create", {
       method: "POST",
@@ -279,7 +283,7 @@ export const api = {
   async createPerson(input: PersonCreatePhysicalRequestDTO | PersonCreateLegalRequestDTO) {
     const isLegal = "CNPJ" in input;
     const endpoint = isLegal ? "/person/create/legal" : "/person/create/physical";
-    
+
     return fetchApi<PersonResponseDTO>(endpoint, {
       method: "POST",
       body: JSON.stringify(input),
@@ -296,7 +300,7 @@ export const api = {
   async listPaymentInstruments() {
     return fetchApi<any[]>("/payment-instruments");
   },
-  
+
   // ==========================================
   // ATUALIZAÇÕES E STATUS DE CADASTROS BASE
   // ==========================================
@@ -342,7 +346,7 @@ export const api = {
   async updatePerson(id: string, input: any) {
     const isLegal = "CNPJ" in input || input.personType === "LEGAL_ENTITY";
     const endpoint = isLegal ? `/person/update/legal/${id}` : `/person/update/physical/${id}`;
-    
+
     return fetchApi<PersonResponseDTO>(endpoint, {
       method: "PUT",
       body: JSON.stringify(input),
@@ -368,19 +372,15 @@ export const api = {
   // ==========================================
   // INVESTIMENTOS (RENDA FIXA)
   // ==========================================
-  async getInvestmentDashboards(accountId: string) {
-    return fetchApi<FixedIncomeDashboardDTO[]>(`/investments/account/${accountId}/dashboards`);
+  async getInvestmentDashboards(accountId: string): Promise<ProductDashboardDTO[]> {
+    return fetchApi<ProductDashboardDTO[]>(`/investments/account/${accountId}/dashboards`);
   },
-  async createApport(input: any) {
-    return fetchApi<void>("/investments/apport", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  async executeRescue(input: any) {
+
+
+  async executeRescue(data: InvestmentRescueDTO) {
     return fetchApi<void>("/investments/rescue", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(data),
     });
   },
 
@@ -397,17 +397,17 @@ export const api = {
       method: "PUT",
       // Dependendo de como o seu fetchApi é construído por baixo dos panos, 
       // você passa o objeto direto ou precisa do JSON.stringify:
-      body: JSON.stringify(body) 
+      body: JSON.stringify(body)
     });
   },
 
   async transferAccounts(body: {
-    sourceAccountId: string; 
-    destinationAccountId: string; 
-    amount: number; 
-    transferDate: string; 
+    sourceAccountId: string;
+    destinationAccountId: string;
+    amount: number;
+    transferDate: string;
     observations?: string
-  }){
+  }) {
 
     return fetchApi<any>(
       `/transactions/transfer`,
@@ -427,5 +427,27 @@ export const api = {
       }
     );
   },
+
+  createProduct(data: CreateProductDTO) {
+    return fetchApi<void>("/investments/products", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+  },
+
+  createBox(data: CreateBoxDTO) {
+    return fetchApi<void>("/investments/boxes", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+  },
+
+  createApport(data: CreateApportDTO) {
+    return fetchApi<void>("/investments/apport", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+  }
 };
+
 
